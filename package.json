@@ -1,0 +1,13 @@
+{
+  "name": "lan-3d-shooter",
+  "version": "1.0.0",
+  "description": "局域网 3D 射击对战游戏，支持近战与远程武器",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "download-three": "node download-three.js"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {}
+}

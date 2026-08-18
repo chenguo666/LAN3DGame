@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LAN 3D 射击对战</title>
+<style>
+  :root {
+    --accent: #ff5a3c;
+    --accent2: #3cc8ff;
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #9da7b3;
+    --good: #3fb950;
+    --bad: #f85149;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #000;
+    font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+    color: var(--text);
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #gameCanvas {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;
+    display: block;
+    cursor: crosshair;
+  }
+
+  /* ---------- 菜单 ---------- */
+  #menu {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(1200px 600px at 50% -10%, #1a2332 0%, #0d1117 60%);
+    z-index: 40;
+    overflow-y: auto;
+    padding: 30px 16px;
+  }
+  #menu::before {
+    content: "";
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(60,200,255,.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(60,200,255,.05) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+  }
+  .menu-panel {
+    position: relative;
+    width: min(920px, 100%);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px;
+    box-shadow: 0 20px 80px rgba(0,0,0,.6);
+  }
+  .menu-panel h1 {
+    font-size: 32px;
+    letter-spacing: 2px;
+    text-align: center;
+    margin-bottom: 4px;
+  }
+  .menu-panel h1 .accent { color: var(--accent); }
+  .subtitle {
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 22px;
+  }
+  .row { display: flex; gap: 14px; flex-wrap: wrap; }
+  .field { flex: 1; min-width: 220px; }
+  .field label {
+    display: block;
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .field input {
+    width: 100%;
+    padding: 11px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #0d1117;
+    color: var(--text);
+    font-size: 15px;
+    outline: none;
+  }
+  .field input:focus { border-color: var(--accent2); }
+  /* 昵称必填：校验不过时把输入框描边染红，光提示文字太容易被忽略 */
+  .field input.invalid { border-color: #e5534b; background: #1a1011; }
+  .field-hint {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 6px;
+    min-height: 16px;   /* 占好位，出错时不要把下面整块往下顶 */
+  }
+  .field-hint.err { color: #f0625a; }
+
+  .weapon-section { margin-top: 20px; }
+  .weapon-section h2 {
+    font-size: 15px;
+    color: var(--accent2);
+    margin-bottom: 10px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .weapon-section h2 .badge {
+    background: var(--accent2); color: #000;
+    font-size: 12px; padding: 2px 8px; border-radius: 10px;
+  }
+  .weapon-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
+  }
+  @media (max-width: 640px) {
+    .weapon-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  .weapon-card {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    cursor: pointer;
+    transition: all .15s ease;
+    position: relative;
+  }
+  .weapon-card:hover { border-color: var(--muted); transform: translateY(-2px); }
+  .weapon-card.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent), 0 8px 24px rgba(255,90,60,.15);
+    background: #1a1513;
+  }
+    .weapon-card.disabled { opacity: .55; cursor: not-allowed; border-style: dashed; }
+  .weapon-card .w-name { font-size: 15px; font-weight: 600; }
+  .weapon-card .w-type { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .weapon-card .w-stats { font-size: 12px; color: #b7c0ca; margin-top: 8px; line-height: 1.6; }
+  .weapon-card .check {
+    position: absolute; top: 10px; right: 10px;
+    width: 18px; height: 18px; border-radius: 50%;
+    border: 1px solid var(--border); background: #0d1117;
+  }
+  .weapon-card.selected .check {
+    background: var(--accent);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(255,90,60,.25);
+  }
+
+  #startBtn {
+    margin-top: 24px;
+    width: 100%;
+    padding: 14px;
+    border: none;
+    border-radius: 10px;
+    background: linear-gradient(135deg, var(--accent), #ff8a3c);
+    color: #fff;
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 4px;
+    cursor: pointer;
+    transition: filter .15s ease;
+  }
+  #startBtn:hover { filter: brightness(1.1); }
+  #startBtn:disabled { opacity: .5; cursor: not-allowed; }
+  .menu-tip {
+    margin-top: 14px; text-align: center; color: var(--muted); font-size: 12px; line-height: 1.7;
+  }
+  .menu-tip kbd {
+    background: #0d1117; border: 1px solid var(--border); border-bottom-width: 2px;
+    border-radius: 5px; padding: 1px 6px; font-size: 11px; font-family: inherit;
+  }
+
+  /* ---------- HUD ---------- */
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 20; display: none; }
+  #healthWrap {
+    position: absolute; left: 20px; bottom: 20px;
+    width: 240px;
+  }
+    #localNameTag {
+      font-size: 14px; font-weight: 700; color: #fff;
+      text-shadow: 0 1px 4px #000; margin-bottom: 6px;
+      letter-spacing: 1px;
+    }
+  #healthBar {
+    height: 12px; background: rgba(0,0,0,.55);
+    border: 1px solid rgba(255,255,255,.25);
+    border-radius: 8px; overflow: hidden;
+  }
+  #healthFill {
+    height: 100%; width: 100%;
+    background: linear-gradient(90deg, #3fb950, #7ee787);
+    border-radius: 8px;
+    transition: width .2s ease, background .3s ease;
+  }
+  #healthText { font-size: 12px; margin-top: 5px; text-shadow: 0 1px 3px #000; }
+    #statText { font-size: 13px; margin-top: 4px; color: #ffd27a; text-shadow: 0 1px 3px #000; }
+  #weaponWrap {
+    position: absolute; right: 20px; bottom: 20px;
+    text-align: right; text-shadow: 0 1px 3px #000;
+  }
+  #weaponName { font-size: 20px; font-weight: 700; }
+  #ammoText { font-size: 32px; font-weight: 800; letter-spacing: 1px; }
+  #ammoText.low { color: var(--bad); }
+  #reloadTip { font-size: 13px; color: var(--accent2); display: none; margin-top: 4px; }
+  /* 换弹进度条：换弹时间 1.3s~3.8s 差别很大，光有"换弹中…"看不出还要等多久 */
+  #reloadBar {
+    width: 88px; height: 3px; margin: 3px 0 0 auto; border-radius: 2px;
+    background: rgba(255, 255, 255, .18); overflow: hidden;
+  }
+  #reloadBar > i { display: block; height: 100%; width: 0; background: var(--accent2); border-radius: 2px; }
+
+  #crosshair {
+    position: absolute; left: 50%; top: 50%;
+    width: 40px; height: 40px;
+    transform: translate(-50%, -50%);
+    --gap: 6px;
+  }
+  #crosshair::before, #crosshair::after {
+    content: ""; position: absolute; background: rgba(255,255,255,.9);
+  }
+  #crosshair::before { left: 50%; top: calc(50% - 14px - var(--gap)); width: 2px; height: 14px; transform: translateX(-50%); box-shadow: 0 calc(28px + var(--gap) * 2) 0 rgba(255,255,255,.9); }
+  #crosshair::after { top: 50%; left: calc(50% - 14px - var(--gap)); height: 2px; width: 14px; transform: translateY(-50%); box-shadow: calc(28px + var(--gap) * 2) 0 0 rgba(255,255,255,.9); }
+  #crosshairDot {
+    position: absolute; left: 50%; top: 50%;
+    width: 3px; height: 3px; border-radius: 50%;
+    background: rgba(255,255,255,.95);
+    transform: translate(-50%, -50%);
+  }
+
+    /* 新准星样式（覆盖旧的伪元素） */
+    #crosshair { width: 0; height: 0; }
+    #crosshair::before, #crosshair::after { content: none; }
+    #crosshair .ch-line {
+      position: absolute;
+      background: rgba(255,255,255,.95);
+      box-shadow: 0 0 3px rgba(0,0,0,.8);
+    }
+    #crosshair .ch-top { left: -1px; bottom: var(--gap, 7px); width: 2px; height: 9px; }
+    #crosshair .ch-bottom { left: -1px; top: var(--gap, 7px); width: 2px; height: 9px; }
+    #crosshair .ch-left { top: -1px; right: var(--gap, 7px); width: 9px; height: 2px; }
+    #crosshair .ch-right { top: -1px; left: var(--gap, 7px); width: 9px; height: 2px; }
+    #crosshair #chDot {
+      position: absolute; left: -2px; top: -2px;
+      width: 4px; height: 4px; border-radius: 50%;
+      background: rgba(255,255,255,.95);
+      box-shadow: 0 0 4px rgba(0,0,0,.7);
+    }
+    #crosshair.hidden { display: none; }
+
+    /* 狙击镜开镜遮罩 */
+    #scopeOverlay {
+      position: absolute; inset: 0;
+      display: none;
+      background: rgba(0,0,0,0.15);
+    }
+    #scopeOverlay::before {
+      content: "";
+      position: absolute; left: 50%; top: 50%;
+      width: 220px; height: 220px;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      background: rgba(0,0,0,0.92);
+      box-shadow: 0 0 0 8px rgba(0,0,0,0.9);
+    }
+    #scopeReticle {
+      position: absolute; left: 50%; top: 50%;
+      width: 220px; height: 220px;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+    }
+    #scopeReticle::before, #scopeReticle::after {
+      content: ""; position: absolute; background: rgba(255,255,255,0.5);
+    }
+    #scopeReticle::before { left: 50%; top: 0; width: 1px; height: 100%; transform: translateX(-50%); }
+    #scopeReticle::after { top: 50%; left: 0; height: 1px; width: 100%; transform: translateY(-50%); }
+
+      /* 新版狙击镜：中心全透明，四周黑色遮罩，白色分划线 */
+      #scopeOverlay {
+        background: radial-gradient(circle at center,
+          rgba(0,0,0,0) 0px,
+          rgba(0,0,0,0) 110px,
+          rgba(0,0,0,0.88) 112px,
+          rgba(0,0,0,0.96) 100%);
+      }
+      #scopeOverlay::before { display: none; }
+      #scopeReticle {
+        width: 240px; height: 240px;
+        border: 1px solid rgba(255,255,255,0.5);
+      }
+      #scopeReticle::before, #scopeReticle::after {
+        background: rgba(255,255,255,0.9);
+      }
+      #scopeReticle::before { left: 0; top: 50%; width: 100%; height: 1px; transform: translateY(-50%); }
+      #scopeReticle::after { top: 50%; left: 0; height: 1px; width: 100%; transform: translateY(-50%); }
+      #scopeDot {
+        position: absolute; left: 50%; top: 50%;
+        width: 6px; height: 6px; border-radius: 50%;
+        background: #ff4444;
+        transform: translate(-50%, -50%);
+        box-shadow: 0 0 6px rgba(255,0,0,.8);
+      }
+
+  #hitmarker {
+    position: absolute; left: 50%; top: 50%;
+    width: 34px; height: 34px;
+    transform: translate(-50%, -50%) rotate(45deg);
+    opacity: 0; pointer-events: none;
+  }
+  #hitmarker::before, #hitmarker::after { content: ""; position: absolute; background: #fff; }
+  #hitmarker::before { left: 2px; top: 16px; width: 30px; height: 2px; }
+  #hitmarker::after { left: 16px; top: 2px; width: 2px; height: 30px; }
+  #hitmarker.show { animation: hitFade .25s ease-out; }
+  @keyframes hitFade {
+    0% { opacity: 1; transform: translate(-50%,-50%) rotate(45deg) scale(1.3); }
+    100% { opacity: 0; transform: translate(-50%,-50%) rotate(45deg) scale(.8); }
+  }
+
+  #damageOverlay {
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse at center, transparent 40%, rgba(255,0,0,.55) 100%);
+    opacity: 0; transition: opacity .35s ease;
+  }
+  #damageOverlay.show { animation: dmgFade .45s ease-out; }
+  @keyframes dmgFade {
+    0% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
+  #killfeed {
+    position: absolute; top: 18px; right: 18px;
+    display: flex; flex-direction: column; gap: 6px;
+    align-items: flex-end;
+  }
+  .kill-item {
+    background: rgba(0,0,0,.6);
+    border: 1px solid rgba(255,255,255,.15);
+    border-left: 3px solid var(--accent);
+    padding: 6px 12px; border-radius: 6px;
+    font-size: 13px;
+    animation: feedIn .2s ease-out;
+  }
+  .kill-item .killer { color: #ffb4a8; font-weight: 600; }
+  .kill-item .victim { color: #a8d8ff; font-weight: 600; }
+  .kill-item .weapon { color: var(--muted); font-size: 12px; }
+  @keyframes feedIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
+
+    #leaderboard {
+      position: absolute; left: 20px; top: 78px;
+      width: 230px;
+      background: rgba(13,17,23,.72);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      backdrop-filter: blur(4px);
+    }
+    #leaderboardTitle {
+      font-size: 14px; font-weight: 700; letter-spacing: 1px;
+      margin-bottom: 8px; color: #ffd27a;
+      text-shadow: 0 1px 3px #000;
+    }
+    #leaderboardList { display: flex; flex-direction: column; gap: 4px; }
+    .lb-row {
+      display: flex; align-items: center;
+      font-size: 13px; color: var(--text);
+      padding: 3px 6px; border-radius: 6px;
+      background: rgba(255,255,255,.04);
+    }
+    .lb-row.me { background: rgba(255,90,60,.16); color: #fff; }
+    .lb-rank { width: 22px; font-weight: 700; color: var(--muted); }
+    .lb-rank.r1 { color: #ffd700; }
+    .lb-rank.r2 { color: #c0c0c0; }
+    .lb-rank.r3 { color: #cd7f32; }
+    .lb-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lb-kills { font-weight: 700; color: #ffb4a8; margin-right: 4px; }
+    .lb-deaths { color: var(--muted); font-size: 11px; }
+
+  #scoreboard {
+    position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    min-width: 420px;
+    background: rgba(13,17,23,.92);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    display: none;
+  }
+  #scoreboard h3 { text-align: center; margin-bottom: 12px; letter-spacing: 2px; }
+  #scoreboard table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  #scoreboard th, #scoreboard td { padding: 6px 10px; text-align: left; }
+  #scoreboard th { color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--border); }
+  #scoreboard tr.me { background: rgba(255,90,60,.12); }
+  #scoreboard .alive-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--good); margin-right: 6px; }
+  #scoreboard .dead-dot { background: var(--bad); }
+
+  #deathOverlay {
+    position: absolute; inset: 0;
+    display: none;
+    align-items: center; justify-content: center;
+    background: rgba(0,0,0,.55);
+    z-index: 25;
+  }
+  #deathOverlay .death-box { text-align: center; }
+  #deathOverlay h2 { font-size: 42px; color: var(--bad); letter-spacing: 6px; }
+  #deathOverlay p { color: var(--muted); margin-top: 10px; }
+    #respawnCountdown { font-size: 26px; font-weight: 700; color: #ffd27a; letter-spacing: 2px; }
+
+  #controlsTip {
+    position: absolute; left: 20px; top: 18px;
+    font-size: 12px; color: var(--muted); line-height: 1.7;
+    text-shadow: 0 1px 3px #000;
+  }
+  #controlsTip kbd {
+    background: rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.2);
+    border-radius: 4px; padding: 0 5px; font-family: inherit;
+  }
+
+  /* ---------- 加载 / 错误 ---------- */
+  #loading, #error {
+    position: fixed; inset: 0; z-index: 60;
+    display: flex; align-items: center; justify-content: center;
+    background: #0d1117; color: var(--text);
+    text-align: center; flex-direction: column; gap: 16px;
+  }
+  #error { display: none; }
+  .spinner {
+    width: 40px; height: 40px;
+    border: 3px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #error code {
+    background: #161b22; padding: 4px 8px; border-radius: 6px; color: var(--accent2);
+  }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+
+<!-- 加载遮罩 -->
+<div id="loading"><div class="spinner"></div><div>正在加载引擎…</div></div>
+
+<!-- 错误遮罩 -->
+<div id="error">
+  <h2>引擎加载失败</h2>
+  <p>无法加载 Three.js。请确认本机可访问互联网，<br>或将 <code>three.min.js</code> 放到 <code>public/js/vendor/</code> 目录后刷新。</p>
+  <p style="font-size:12px;color:#9da7b3">下载地址：https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js</p>
+</div>
+
+<!-- 主菜单 -->
+<div id="menu">
+  <div class="menu-panel">
+    <h1><span class="accent">LAN</span> 3D 射击对战</h1>
+    <div class="subtitle">局域网多人对战 · 自由搭配近战与远程武器</div>
+
+    <div class="row">
+      <div class="field">
+        <label>人物名称 <span style="color:#f0625a">*必填</span>（进入游戏后显示在头顶）</label>
+        <input id="nameInput" maxlength="16" placeholder="请输入昵称…" value=""
+               autocomplete="off" spellcheck="false">
+        <div class="field-hint" id="nameHint">1–16 个字符，不能全是空格</div>
+      </div>
+    </div>
+
+    <div class="weapon-section">
+      <h2><span class="badge">3</span> 近战武器（刀）</h2>
+      <div class="weapon-grid" id="meleeGrid">
+        <div class="weapon-card selected" data-id="knife">
+          <div class="check"></div>
+          <div class="w-name">🔪 战术匕首</div>
+          <div class="w-type">近战 · 攻速极快</div>
+          <div class="w-stats">伤害 30<br>范围 2.4m · 冷却 0.38s</div>
+        </div>
+        <div class="weapon-card" data-id="axe">
+          <div class="check"></div>
+          <div class="w-name">🪓 消防斧</div>
+          <div class="w-type">近战 · 重击</div>
+          <div class="w-stats">伤害 60<br>范围 3.0m · 冷却 0.95s</div>
+        </div>
+        <div class="weapon-card" data-id="katana">
+          <div class="check"></div>
+          <div class="w-name">⚔️ 武士刀</div>
+          <div class="w-type">近战 · 均衡</div>
+          <div class="w-stats">伤害 40<br>范围 3.2m · 冷却 0.56s</div>
+        </div>
+          <div class="weapon-card" data-id="kukri">
+            <div class="check"></div>
+            <div class="w-name">🗡️ 尼泊尔军刀</div>
+            <div class="w-type">近战 · 弯刀</div>
+            <div class="w-stats">伤害 45<br>范围 2.6m · 冷却 0.45s</div>
+          </div>
+          <div class="weapon-card" data-id="chainsaw">
+            <div class="check"></div>
+            <div class="w-name">🪚 电锯</div>
+            <div class="w-type">近战 · 极速切割</div>
+            <div class="w-stats">伤害 30<br>范围 2.7m · 冷却 0.25s</div>
+          </div>
+      </div>
+    </div>
+
+    <div class="weapon-section">
+      <h2><span class="badge">1</span> 主武器（副武器自动手枪）</h2>
+      <div class="weapon-grid" id="rangedGrid">
+        <div class="weapon-card disabled" data-id="pistol">
+          <div class="check"></div>
+          <div class="w-name">🔫 手枪</div>
+          <div class="w-type">副武器 · 自动装备</div>
+          <div class="w-stats">伤害 26 · 弹匣 12<br>射程 90m · 射速 240ms</div>
+        </div>
+        <div class="weapon-card" data-id="shotgun">
+          <div class="check"></div>
+          <div class="w-name">💥 霰弹枪</div>
+          <div class="w-type">半自动 · 近距爆发</div>
+          <div class="w-stats">伤害 13×8 弹丸 · 弹匣 6<br>射程 45m · 射速 900ms</div>
+        </div>
+        <div class="weapon-card selected" data-id="rifle">
+          <div class="check"></div>
+          <div class="w-name">🎯 突击步枪</div>
+          <div class="w-type">全自动 · 持续火力</div>
+          <div class="w-stats">伤害 19 · 弹匣 30<br>射程 110m · 射速 105ms</div>
+        </div>
+          <div class="weapon-card" data-id="awp">
+            <div class="check"></div>
+            <div class="w-name">🎯 狙击步枪</div>
+            <div class="w-type">栓动 · 一枪毙命</div>
+            <div class="w-stats">伤害 150 · 弹匣 5<br>射程 160m · 射速 1400ms</div>
+          </div>
+            <div class="weapon-card" data-id="dmr">
+              <div class="check"></div>
+              <div class="w-name">🎯 连狙</div>
+              <div class="w-type">半自动 · 两发毙命</div>
+              <div class="w-stats">伤害 55 · 弹匣 10<br>射程 120m · 射速 300ms</div>
+            </div>
+            <div class="weapon-card" data-id="lmg">
+              <div class="check"></div>
+              <div class="w-name">🔥 重机枪</div>
+              <div class="w-type">全自动 · 火力压制</div>
+              <div class="w-stats">伤害 16 · 弹匣 125<br>射程 100m · 射速 95ms</div>
+            </div>
+      </div>
+    </div>
+
+    <!-- 没填昵称前按钮就是禁用的：不给「先点了再被打回来」的机会 -->
+    <button id="startBtn" disabled>进 入 游 戏</button>
+    <div class="menu-tip">
+      <kbd>W A S D</kbd> 移动 · <kbd>Shift</kbd> 疾跑 · <kbd>空格</kbd> 跳跃<br>
+      <kbd>鼠标</kbd> 视角 · <kbd>左键</kbd> 攻击 · <kbd>右键</kbd> 开镜 · <kbd>1</kbd> 主武器 · <kbd>2</kbd> 副武器 · <kbd>3</kbd> 刀 · <kbd>4</kbd> 手雷 · <kbd>G</kbd> 烟雾弹 · <kbd>R</kbd> 换弹 · <kbd>Tab</kbd> 战绩 · <kbd>Esc</kbd> 释放鼠标
+    </div>
+  </div>
+</div>
+
+<!-- HUD -->
+<div id="hud">
+  <div id="controlsTip">
+    <kbd>WASD</kbd> 移动 <kbd>Shift</kbd> 跑 <kbd>空格</kbd> 跳<br>
+    <kbd>1</kbd> 主武器 <kbd>2</kbd> 副武器 <kbd>3</kbd> 刀 <kbd>4</kbd> 手雷 <kbd>G</kbd> 烟雾弹 <kbd>R</kbd> 换弹 <kbd>Tab</kbd> 战绩
+  </div>
+  <div id="killfeed"></div>
+  <div id="crosshair">
+      <span class="ch-line ch-top"></span>
+      <span class="ch-line ch-bottom"></span>
+      <span class="ch-line ch-left"></span>
+      <span class="ch-line ch-right"></span>
+      <span id="chDot"></span>
+    </div>
+    <div id="scopeOverlay"><div id="scopeReticle"><span id="scopeDot"></span></div></div>
+  <div id="hitmarker"></div>
+  <div id="damageOverlay"></div>
+  <div id="deathOverlay">
+    <div class="death-box">
+      <h2>阵 亡</h2>
+      <p id="respawnCountdown">3 秒后自动复活…</p>
+    </div>
+  </div>
+  <div id="healthWrap">
+    <div id="localNameTag">玩家：未命名</div>
+      <div id="healthBar"><div id="healthFill"></div></div>
+    <div id="healthText">100 / 100</div>
+      <div id="statText">击杀 0 · 死亡 0</div>
+  </div>
+  <div id="weaponWrap">
+    <div id="weaponName">手枪</div>
+    <div id="ammoText">12 / ∞</div>
+    <div id="reloadTip">换弹中…<div id="reloadBar"><i></i></div></div>
+  </div>
+    <div id="leaderboard">
+      <div id="leaderboardTitle">🏆 击杀排行榜</div>
+      <div id="leaderboardList"></div>
+    </div>
+  <div id="scoreboard">
+    <h3>实时战绩</h3>
+    <table>
+      <thead><tr><th>玩家</th><th>状态</th><th>击杀</th><th>死亡</th><th>K/D</th></tr></thead>
+      <tbody id="scoreBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(function () {
+  var loading = document.getElementById('loading');
+  var errorBox = document.getElementById('error');
+
+  function showError() {
+    if (loading) loading.style.display = 'none';
+    if (errorBox) errorBox.style.display = 'flex';
+  }
+
+  function loadGame() {
+    if (loading) loading.style.display = 'none';
+    var s = document.createElement('script');
+    s.src = 'js/game_v2.js';
+    s.onerror = showError;
+    document.head.appendChild(s);
+  }
+
+  function tryLoad(list, index) { // timeout-protected loader
+    if (index >= list.length) { if (window.THREE) { loadGame(); } else { showError(); } return; }
+    var s = document.createElement('script');
+    s.src = list[index];
+      var resolved = false;
+      var timer = setTimeout(function () {
+        if (resolved) return;
+        resolved = true;
+        tryLoad(list, index + 1);
+      }, 7000);
+    s.onload = function () {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+      if (window.THREE) { loadGame(); }
+      else { tryLoad(list, index + 1); }
+    };
+    s.onerror = function () {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        tryLoad(list, index + 1);
+      };
+    document.head.appendChild(s);
+  }
+
+  tryLoad([
+    'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js',
+    'https://unpkg.com/three@0.160.0/build/three.min.js',
+    'js/vendor/three.min.js'
+  ], 0);
+})();
+</script>
+</body>
+</html>
