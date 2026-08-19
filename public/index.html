@@ -319,6 +319,20 @@
     0% { opacity: 1; transform: translate(-50%,-50%) rotate(45deg) scale(1.3); }
     100% { opacity: 0; transform: translate(-50%,-50%) rotate(45deg) scale(.8); }
   }
+  /* 爆头：换成金红色 + 更粗更大更慢的一下。
+     只改颜色是不够的——命中标记只闪 0.25s，红白在这个时长里很难分辨，
+     所以同时加粗到 3px、放大初始 scale、把动画拉到 0.34s，靠「体感更重」来区分。*/
+  #hitmarker.headshot::before, #hitmarker.headshot::after {
+    background: #ffcf3a;
+    box-shadow: 0 0 6px rgba(255,60,40,.95);
+  }
+  #hitmarker.headshot::before { left: 1px; top: 16px; width: 32px; height: 3px; }
+  #hitmarker.headshot::after { left: 16px; top: 1px; width: 3px; height: 32px; }
+  #hitmarker.headshot.show { animation: hitFadeHead .34s ease-out; }
+  @keyframes hitFadeHead {
+    0% { opacity: 1; transform: translate(-50%,-50%) rotate(45deg) scale(1.75); }
+    100% { opacity: 0; transform: translate(-50%,-50%) rotate(45deg) scale(.75); }
+  }
 
   #damageOverlay {
     position: absolute; inset: 0;
@@ -347,6 +361,13 @@
   .kill-item .killer { color: #ffb4a8; font-weight: 600; }
   .kill-item .victim { color: #a8d8ff; font-weight: 600; }
   .kill-item .weapon { color: var(--muted); font-size: 12px; }
+  /* 命中部位标签。只有爆头值得高亮，其它部位用灰字，
+     否则一屏五条击杀提示里全是彩色小标签，反而看不见爆头。*/
+  .kill-item .zone { color: var(--muted); font-size: 12px; }
+  .kill-item .zone.head {
+    color: #ffcf3a; font-weight: 700;
+    text-shadow: 0 0 6px rgba(255,60,40,.8);
+  }
   @keyframes feedIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
 
     #leaderboard {

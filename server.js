@@ -17,10 +17,54 @@ const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const TICK_RATE = 1000 / 30; // 30Hz
 const ARENA_HALF = 46;        // 场地半宽（x/z 范围 -46..46）
-const PLAYER_RADIUS = 0.65;   // 命中判定球半径
+const PLAYER_RADIUS = 0.65;   // 玩家「占地」半径：近战测距、手雷测距用，不再是子弹判定
 const PLAYER_EYE = 1.55;      // 视线高度（枪口/眼睛）
-const PLAYER_CENTER_Y = 1.1;  // 命中球中心高度
+const PLAYER_CENTER_Y = 1.1;  // 玩家体心高度（手雷、AI 参考点）
 const RESPAWN_TIME = 3000;
+
+// ---------------------------------------------------------------
+// 命中部位模型
+// ---------------------------------------------------------------
+// 原来子弹判定是一个 r=0.65、中心 y=1.1 的整体球：横向是个 1.3m 宽的判定泡，
+// 竖直只覆盖 0.45~1.75 —— 打腿完全不判定，而打头和打肚子一模一样。
+// 要做部位倍率，先得有部位，所以换成一组按躯体摆位的竖直圆柱 + 一个头球。
+//
+// 尺寸不是拍的，是从客户端模型量出来的（把 createRemotePlayer 返回的
+// headGroup / chest / leftArm / rightArm / leftLeg / rightLeg 各自遍历一遍，
+// 取世界空间 bbox 的并集）：
+//     头（含头盔）  y 1.540 ~ 1.873   半宽 0.160
+//     躯干 + 背心   y 0.900 ~ 1.570
+//     手臂          y 1.079 ~ 1.536
+//     腿（靴底落在 y=0）y 0 ~ 0.921
+//
+// 代价必须说清楚：横向判定从 ±0.65 收到 ±0.42，比以前难打。这不是副作用，
+// 而是做部位判定的**前提**——不收窄的话「手臂」区会一直伸到体侧 65cm，
+// 打偏半米也算命中手臂，倍率就成了笑话。作为交换，竖直方向从 0.45~1.75
+// 扩到 0~1.90：腿和头第一次真的能单独打中。
+//
+// kind: 'sphere' 只用 y/r；'cyl' 是**有限**竖直圆柱（带上下平端盖）。
+// 这里必须用有限圆柱而不是胶囊：胶囊的端盖会往两端各鼓出一个 r，
+// 躯干和头/腿一定互相嵌套，而下面取的是**最近**命中，外层永远先中，分区就废了。
+// ox 是沿受击者体侧方向的偏移（随其 yaw 一起转），左右对称所以只有正负之分。
+const HIT_ZONES = [
+  { zone: 'head',  mult: 2.35, kind: 'sphere', y: 1.70, r: 0.20 },
+  { zone: 'torso', mult: 1.00, kind: 'cyl', y0: 0.98, y1: 1.56, r: 0.34, ox: 0 },
+  // 手臂外缘 0.26+0.16=0.42，比躯干的 0.34 更靠外，所以侧面来的弹先中手臂；
+  // 而正对胸口的弹（体侧向偏移 <0.10）根本碰不到这两根，胸口不会被误判成手臂。
+  { zone: 'arm',   mult: 0.78, kind: 'cyl', y0: 1.02, y1: 1.52, r: 0.16, ox: 0.26 },
+  { zone: 'arm',   mult: 0.78, kind: 'cyl', y0: 1.02, y1: 1.52, r: 0.16, ox: -0.26 },
+  { zone: 'leg',   mult: 0.80, kind: 'cyl', y0: 0.02, y1: 0.98, r: 0.20, ox: 0.13 },
+  { zone: 'leg',   mult: 0.80, kind: 'cyl', y0: 0.02, y1: 0.98, r: 0.20, ox: -0.13 },
+];
+// 广相包围球：把上面 6 个体积全部外切包住，先排除再细分，
+// 免得每发子弹对每个玩家都做 6 次求交。
+// 校核最远的几个点（相对中心 y=0.95）：头顶 (0,1.90) → 0.95；
+// 脚外缘 (0.33,0.02) → 0.99；手臂上外角 (0.42,1.52) → 0.71。r=1.02 够，留到 1.06。
+const HIT_BROAD_Y = 0.95;
+const HIT_BROAD_R = 1.06;
+// 部位中文名，只用于击杀提示
+const ZONE_LABEL = { head: '头部', torso: '躯干', arm: '手臂', leg: '腿部' };
+
 
 // ---------------------------------------------------------------
 // 投掷物弹道参数
@@ -73,59 +117,91 @@ const WEAPONS = {
   //   moveSpread  跑动时额外叠加的散射（按水平速度线性插值）
   //   airSpread   离地时额外叠加的散射
   //   adsSpread   开镜时对「基础+累积」部分的缩放
+  //   hipSpread   不开镜（腰射）时额外叠加的固定锥角
   //   recoil      每发的抬枪量（弧度，纵向）；recoilH 横向抖动幅度
+  //   recoilRamp  连发时后坐力的增长量：实际抬枪 = recoil × (1 + ramp × bloom/bloomMax)
+  //
+  // hipSpread 为什么是**加法**而不是乘在 spread 上：
+  // 乘法会把「本来精度高的枪腰射也准」这个不合理特性原样放大——
+  // 狙击枪 spread 只有 0.0004，乘 10 倍还是 0.004（0.23°），站着不开镜一枪爆头照旧。
+  // 真实腰射之所以散，是因为枪没有稳定的参考点（不贴腮、不抵肩），
+  // 这个误差跟枪本身的精度无关，所以它就该是一个各枪量级相近的常数项。
+  // 取值按「10m 处的落点半径」定：步枪 0.034rad → 34cm（一个躯干宽），
+  // 也就是腰射在十米内还能压住人，二十米开外就得开镜。枪越长越没谱，
+  // 所以狙 / 连狙 / 机枪的惩罚最大。
+  //
+  // bloom 的硬约束（六把枪原来全违反了，属于实打实的 bug 而不是手感偏好）：
+  //     bloom > bloomDecay × cooldown/1000
+  // tryFire 每次都先 decayBloom(p, now) 按「距上次开火的时间」回落，再累加本发。
+  // 步枪两发间隔 105ms、bloomDecay 0.055/s → 每次先掉 0.00577，而每发只加 0.0035，
+  // 净增长是负的，于是 p.bloom 在 0 和 0.0035 之间原地弹跳，永远碰不到 bloomMax。
+  // 连带把 recoilRamp 也废了 —— 它拿 bloom/bloomMax 当「连了多久」的进度，恒为 0。
+  // 现在按「连打 N 发到上限」反解：bloom = bloomDecay×cooldown/1000 + bloomMax/N。
+  // N：手枪 6、霰弹 4、步枪 12、狙 5、连狙 5、机枪 25。
+  // 慢射速的两把（霰弹 900ms / 狙 1400ms）光调 bloom 不够：回落量本身就超过 bloomMax，
+  // 无论 bloom 多大都攒不起来，所以同时放慢它们的 bloomDecay（狙还抬了 bloomMax）。
   pistol: {
     id: 'pistol', name: '手枪', type: 'ranged',
     damage: 26, mag: 12, cooldown: 240, range: 90,
     pellets: 1, spread: 0.006, reloadTime: 1.3, auto: false,
-    bloom: 0.0040, bloomMax: 0.030, bloomDecay: 0.050,
+    bloom: 0.0170, bloomMax: 0.030, bloomDecay: 0.050,
     moveSpread: 0.012, airSpread: 0.020, adsSpread: 0.55,
-    recoil: 0.0130, recoilH: 0.0045,
+    hipSpread: 0.020, recoil: 0.0130, recoilH: 0.0045, recoilRamp: 0.85,
     color: 0x444444,
   },
   shotgun: {
     id: 'shotgun', name: '霰弹枪', type: 'ranged',
     damage: 13, mag: 6, cooldown: 900, range: 45,
     pellets: 8, spread: 0.050, reloadTime: 2.3, auto: false,
-    bloom: 0.0100, bloomMax: 0.075, bloomDecay: 0.060,
+    bloom: 0.0440, bloomMax: 0.075, bloomDecay: 0.028,
     moveSpread: 0.020, airSpread: 0.030, adsSpread: 0.80,
-    recoil: 0.0330, recoilH: 0.0080,
+    // 霰弹枪的腰射惩罚故意给得最小：它本来就是靠 0.05 的弹丸散布吃近距离的，
+    // 再叠一个大锥角只会把它从「近战王」变成「什么距离都不行」。
+    hipSpread: 0.016, recoil: 0.0330, recoilH: 0.0080, recoilRamp: 0.55,
     color: 0x553311,
   },
   rifle: {
     id: 'rifle', name: '突击步枪', type: 'ranged',
     damage: 19, mag: 30, cooldown: 105, range: 110,
     pellets: 1, spread: 0.005, reloadTime: 1.9, auto: true,
-    bloom: 0.0035, bloomMax: 0.042, bloomDecay: 0.055,
+    bloom: 0.0093, bloomMax: 0.042, bloomDecay: 0.055,
     moveSpread: 0.016, airSpread: 0.028, adsSpread: 0.45,
-    recoil: 0.0090, recoilH: 0.0038,
+    hipSpread: 0.034, recoil: 0.0090, recoilH: 0.0038, recoilRamp: 1.30,
     color: 0x222222,
   },
     awp: {
       id: 'awp', name: '狙击步枪', type: 'ranged',
-      damage: 150, mag: 5, cooldown: 1400, range: 160,
+      // 150 → 120。这一改是部位倍率的**直接后果**，不是顺手调平衡：
+      // 满血 100，150 打四肢也是 150×0.78=117 > 100，倍率对这把枪等于不存在，
+      // 一枪爆脚背和一枪爆头没有任何区别。120 之后躯干仍是一枪一个（120），
+      // 手臂 94 / 腿 96 都刚好留一口气，爆头 282 —— 参照 CS 的 AWP
+      // （胸 115、腿不致死）也是这个思路：狙的强度体现在「命中就赢」，
+      // 而不是「打到哪都赢」。
+      damage: 120, mag: 5, cooldown: 1400, range: 160,
       pellets: 1, spread: 0.0004, reloadTime: 2.6, auto: false,
-      bloom: 0.0020, bloomMax: 0.010, bloomDecay: 0.015,
+      bloom: 0.0200, bloomMax: 0.030, bloomDecay: 0.010,
       moveSpread: 0.030, airSpread: 0.045, adsSpread: 0.15,
-      recoil: 0.0460, recoilH: 0.0060,
+      hipSpread: 0.070, recoil: 0.0460, recoilH: 0.0060, recoilRamp: 0.45,
       color: 0x1a3a1a,
     },
     dmr: {
       id: 'dmr', name: '连狙', type: 'ranged',
       damage: 55, mag: 10, cooldown: 300, range: 120,
       pellets: 1, spread: 0.002, reloadTime: 2.1, auto: false,
-      bloom: 0.0030, bloomMax: 0.022, bloomDecay: 0.035,
+      bloom: 0.0150, bloomMax: 0.022, bloomDecay: 0.035,
       moveSpread: 0.020, airSpread: 0.032, adsSpread: 0.30,
-      recoil: 0.0230, recoilH: 0.0050,
+      hipSpread: 0.046, recoil: 0.0230, recoilH: 0.0050, recoilRamp: 1.00,
       color: 0x2a4a2a,
     },
     lmg: {
       id: 'lmg', name: '重机枪', type: 'ranged',
       damage: 16, mag: 125, cooldown: 95, range: 100,
       pellets: 1, spread: 0.009, reloadTime: 3.8, auto: true,
-      bloom: 0.0030, bloomMax: 0.055, bloomDecay: 0.050,
+      bloom: 0.0070, bloomMax: 0.055, bloomDecay: 0.050,
       moveSpread: 0.024, airSpread: 0.036, adsSpread: 0.60,
-      recoil: 0.0062, recoilH: 0.0042,
+      // ramp 最高：125 发的弹链打到后半段必须完全压不住，
+      // 否则「一直按着不放」永远优于点射，机枪就没有节奏可言了。
+      hipSpread: 0.042, recoil: 0.0062, recoilH: 0.0042, recoilRamp: 1.70,
       color: 0x3a3a3a,
     },
 };
@@ -263,15 +339,18 @@ function spreadDir(dir, halfAngle) {
   });
 }
 
-// 当前这一发的实际散射半角：基础 + 连发累积（开镜缩放），再叠加移动/离地惩罚。
-// 移动惩罚不受开镜缩放影响——边跑边开镜也不该有静止时的精度。
+// 当前这一发的实际散射半角：基础 + 连发累积（开镜缩放），再叠加腰射/移动/离地惩罚。
+// 三个惩罚项都**不**受开镜缩放影响：
+//   腰射惩罚本身就是「没开镜」的代价，乘上 adsSpread 是逻辑打转；
+//   移动惩罚是因为身体在动，边跑边开镜也不该有站定的精度。
 function effectiveSpread(p, wpn) {
   const base = (wpn.spread + (p.bloom || 0)) * (p.ads ? (wpn.adsSpread || 1) : 1);
+  const hip = p.ads ? 0 : (wpn.hipSpread || 0);
   const vx = p.vel ? p.vel.x : 0, vz = p.vel ? p.vel.z : 0;
   const speed = Math.sqrt(vx * vx + vz * vz);
   const moveFrac = clamp(speed / 8, 0, 1);
   const air = (p.pos.y > 0.35 ? (wpn.airSpread || 0) : 0);
-  return base + moveFrac * (wpn.moveSpread || 0) + air;
+  return base + hip + moveFrac * (wpn.moveSpread || 0) + air;
 }
 
 // 射线 vs AABB（slab 方法），返回最近交点距离 t（正数），未命中返回 null
@@ -331,6 +410,76 @@ function raySphere(o, d, cx, cy, cz, r) {
   if (t < 0) t = -b + sq;
   if (t < 0) return null;
   return t;
+}
+
+// 射线 vs 竖直有限圆柱（侧面 + 上下两个平端盖），返回最近正向 t 或 null。
+// 侧面那一段把问题投影到 xz 平面就退化成「射线 vs 圆」，所以只解一个二次方程；
+// 端盖单独求一次平面交点再判是否落在圆内。
+// d.y ≈ 0（平射）时端盖分支整个跳过，靠侧面解；
+// d.x/d.z ≈ 0（垂直上下打）时侧面分支跳过，靠端盖解。两种退化都不会漏。
+function rayCylinderY(o, d, cx, cz, r, y0, y1) {
+  let best = null;
+  const ox = o.x - cx, oz = o.z - cz;
+  const a = d.x * d.x + d.z * d.z;
+  if (a > 1e-12) {
+    const b = 2 * (ox * d.x + oz * d.z);
+    const c = ox * ox + oz * oz - r * r;
+    const disc = b * b - 4 * a * c;
+    if (disc >= 0) {
+      const sq = Math.sqrt(disc);
+      // 近根先试；近根被 y 区间挡掉或在身后时才看远根（贴身开枪时起点就在柱内）
+      const roots = [(-b - sq) / (2 * a), (-b + sq) / (2 * a)];
+      for (let i = 0; i < 2; i++) {
+        const t = roots[i];
+        if (t <= 1e-6) continue;
+        const y = o.y + d.y * t;
+        if (y < y0 || y > y1) continue;
+        best = t;
+        break;
+      }
+    }
+  }
+  if (Math.abs(d.y) > 1e-12) {
+    for (let i = 0; i < 2; i++) {
+      const t = ((i === 0 ? y0 : y1) - o.y) / d.y;
+      if (t <= 1e-6) continue;
+      const px = o.x + d.x * t - cx, pz = o.z + d.z * t - cz;
+      if (px * px + pz * pz > r * r) continue;
+      if (best === null || t < best) best = t;
+    }
+  }
+  return best;
+}
+
+// 对一个玩家做分部位求交。返回 { t, zone, mult } 或 null。
+// 取**最近**命中而不是按部位优先级：手臂挡在胸口前面时就该判成手臂，
+// 这也是上面刻意让手臂柱比躯干柱更靠外的原因。
+function raycastPlayerZones(o, d, q, maxT) {
+  // 广相。raySphere 在「起点已在球内」时返回的是远交点（>0），也算命中，
+  // 所以这里不用额外补贴身判定；返回 null 才是真的没交集。
+  const bt = raySphere(o, d, q.pos.x, q.pos.y + HIT_BROAD_Y, q.pos.z, HIT_BROAD_R);
+  if (bt === null || bt >= maxT) return null;
+
+  // 体侧方向 = 朝向在水平面内左转 90°。左右对称，所以正负无所谓，只要垂直于朝向。
+  const fwd = forwardFromYawPitch(q.yaw || 0, 0);
+  const fh = Math.hypot(fwd.x, fwd.z) || 1;
+  const sx = -fwd.z / fh, sz = fwd.x / fh;
+
+  let best = null;
+  for (let i = 0; i < HIT_ZONES.length; i++) {
+    const z = HIT_ZONES[i];
+    let t;
+    if (z.kind === 'sphere') {
+      t = raySphere(o, d, q.pos.x, q.pos.y + z.y, q.pos.z, z.r);
+    } else {
+      const cx = q.pos.x + sx * (z.ox || 0);
+      const cz = q.pos.z + sz * (z.ox || 0);
+      t = rayCylinderY(o, d, cx, cz, z.r, q.pos.y + z.y0, q.pos.y + z.y1);
+    }
+    if (t === null || t >= maxT) continue;
+    if (best === null || t < best.t) best = { t, zone: z.zone, mult: z.mult };
+  }
+  return best;
 }
 
 // 投掷物一个定步长：重力 → 位移 → 与地面/围墙/掩体求交并反弹。
@@ -932,6 +1081,8 @@ class Game {
 
       let bestT = wpn.range;
       let hitPlayer = null;
+      let hitZone = null;
+      let hitMult = 1;
 
       // 掩体
       for (const box of BOXES) {
@@ -941,16 +1092,19 @@ class Game {
         if (t !== null && t < bestT) {
           bestT = t;
           hitPlayer = null;
+          hitZone = null;
         }
       }
 
-      // 玩家
+      // 玩家（分部位）
       for (const q of this.players.values()) {
         if (q === p || !q.joined || !q.alive) continue;
-        const t = raySphere(origin, d, q.pos.x, q.pos.y + PLAYER_CENTER_Y, q.pos.z, PLAYER_RADIUS);
-        if (t !== null && t < bestT) {
-          bestT = t;
+        const h = raycastPlayerZones(origin, d, q, bestT);
+        if (h) {
+          bestT = h.t;
           hitPlayer = q.id;
+          hitZone = h.zone;
+          hitMult = h.mult;
         }
       }
 
@@ -961,13 +1115,16 @@ class Game {
           z: origin.z + d.z * bestT,
         },
         hitPlayer,
+        hitZone,
       });
 
       if (hitPlayer !== null) {
         const victim = this.players.get(hitPlayer);
         if (victim) {
           if (!hitPlayers.includes(hitPlayer)) hitPlayers.push(hitPlayer);
-          this.damage(victim, p, wpn, wpn.damage);
+          // 倍率四舍五入到整数伤害：霰弹枪 8 颗弹丸各算一次，
+          // 留小数会让同一次开火的总伤害随命中分布出现看不懂的零点几差。
+          this.damage(victim, p, wpn, Math.max(1, Math.round(wpn.damage * hitMult)), hitZone);
         }
       }
     }
@@ -1057,7 +1214,11 @@ class Game {
     });
   }
 
-  damage(victim, attacker, wpn, amount) {
+  // zone 是命中部位（'head'/'torso'/'arm'/'leg'），只用于击杀提示；
+  // 倍率已经在调用方乘进 amount 里了，这里不再乘第二遍。
+  // 近战和手雷不传 zone：近战是水平扇区判定、手雷是球形范围衰减，
+  // 两者都没有「命中点」这个概念，硬凑一个部位出来只会是假的。
+  damage(victim, attacker, wpn, amount, zone) {
     if (!victim.alive) return;
       victim.lastDamageTime = Date.now();
     victim.hp -= amount;
@@ -1075,6 +1236,8 @@ class Game {
         victimId: victim.id,
         victimName: victim.name,
         weaponId: wpn.id,
+        zone: zone || null,
+        zoneLabel: zone ? (ZONE_LABEL[zone] || null) : null,
       });
     }
   }

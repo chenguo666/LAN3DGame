@@ -26,13 +26,24 @@
     // 散射圈和服务端真正判定的散射不是一回事）：
     //   spread 首发锥形散射半角(rad) / bloom 每发累加 / bloomMax 上限 / bloomDecay 每秒回落
     //   moveSpread 跑动附加 / airSpread 离地附加 / adsSpread 开镜对「基础+累积」的缩放
-    //   recoil 每发抬枪量(rad) / recoilH 横向抖动
-    pistol: { id: 'pistol', name: '手枪', type: 'ranged', damage: 26, mag: 12, cooldown: 240, range: 90, pellets: 1, spread: 0.006, reloadTime: 1.3, auto: false, bloom: 0.0040, bloomMax: 0.030, bloomDecay: 0.050, moveSpread: 0.012, airSpread: 0.020, adsSpread: 0.55, recoil: 0.0130, recoilH: 0.0045, color: 0x444444 },
-    shotgun: { id: 'shotgun', name: '霰弹枪', type: 'ranged', damage: 13, mag: 6, cooldown: 900, range: 45, pellets: 8, spread: 0.050, reloadTime: 2.3, auto: false, bloom: 0.0100, bloomMax: 0.075, bloomDecay: 0.060, moveSpread: 0.020, airSpread: 0.030, adsSpread: 0.80, recoil: 0.0330, recoilH: 0.0080, color: 0x553311 },
-    rifle: { id: 'rifle', name: '突击步枪', type: 'ranged', damage: 19, mag: 30, cooldown: 105, range: 110, pellets: 1, spread: 0.005, reloadTime: 1.9, auto: true, bloom: 0.0035, bloomMax: 0.042, bloomDecay: 0.055, moveSpread: 0.016, airSpread: 0.028, adsSpread: 0.45, recoil: 0.0090, recoilH: 0.0038, color: 0x222222 },
-    awp: { id: 'awp', name: '狙击步枪', type: 'ranged', damage: 150, mag: 5, cooldown: 1400, range: 160, pellets: 1, spread: 0.0004, reloadTime: 2.6, auto: false, bloom: 0.0020, bloomMax: 0.010, bloomDecay: 0.015, moveSpread: 0.030, airSpread: 0.045, adsSpread: 0.15, recoil: 0.0460, recoilH: 0.0060, color: 0x1a3a1a },
-      dmr: { id: 'dmr', name: '连狙', type: 'ranged', damage: 55, mag: 10, cooldown: 300, range: 120, pellets: 1, spread: 0.002, reloadTime: 2.1, auto: false, bloom: 0.0030, bloomMax: 0.022, bloomDecay: 0.035, moveSpread: 0.020, airSpread: 0.032, adsSpread: 0.30, recoil: 0.0230, recoilH: 0.0050, color: 0x2a4a2a },
-      lmg: { id: 'lmg', name: '重机枪', type: 'ranged', damage: 16, mag: 125, cooldown: 95, range: 100, pellets: 1, spread: 0.009, reloadTime: 3.8, auto: true, bloom: 0.0030, bloomMax: 0.055, bloomDecay: 0.050, moveSpread: 0.024, airSpread: 0.036, adsSpread: 0.60, recoil: 0.0062, recoilH: 0.0042, color: 0x3a3a3a }
+    //   hipSpread 腰射（不开镜）附加的固定锥角 —— 加法项，理由见 server.js 同处注释
+    //   recoil 每发抬枪量(rad) / recoilH 横向抖动 / recoilRamp 连发时后坐力增长系数
+    //
+    // bloom 的取值有一个硬约束，之前六把枪全违反了：
+    //     bloom 必须 > bloomDecay × cooldown/1000
+    // 因为每次开火前都会先按「距上次开火的时间」回落一次。步枪 105ms 一发、
+    // bloomDecay 0.055/s，两发之间就要掉 0.00577，而每发只加 0.0035 —— 净值是负的，
+    // 于是 bloom 在 0 和 0.0035 之间原地弹跳，永远到不了 bloomMax。
+    // 后果是连发散射和（依赖 bloom/bloomMax 当进度的）后坐力增长**两个都是死的**：
+    // 模拟一梭子 30 发，每一发的散射和抬枪量分毫不差。
+    // 现在按「打满 N 发到上限」反解：bloom = bloomDecay×cooldown/1000 + bloomMax/N。
+    // N 取值：手枪 6、霰弹 4、步枪 12、狙 5、连狙 5、机枪 25。
+    pistol: { id: 'pistol', name: '手枪', type: 'ranged', damage: 26, mag: 12, cooldown: 240, range: 90, pellets: 1, spread: 0.006, reloadTime: 1.3, auto: false, bloom: 0.0170, bloomMax: 0.030, bloomDecay: 0.050, moveSpread: 0.012, airSpread: 0.020, adsSpread: 0.55, hipSpread: 0.020, recoil: 0.0130, recoilH: 0.0045, recoilRamp: 0.85, color: 0x444444 },
+    shotgun: { id: 'shotgun', name: '霰弹枪', type: 'ranged', damage: 13, mag: 6, cooldown: 900, range: 45, pellets: 8, spread: 0.050, reloadTime: 2.3, auto: false, bloom: 0.0440, bloomMax: 0.075, bloomDecay: 0.028, moveSpread: 0.020, airSpread: 0.030, adsSpread: 0.80, hipSpread: 0.016, recoil: 0.0330, recoilH: 0.0080, recoilRamp: 0.55, color: 0x553311 },
+    rifle: { id: 'rifle', name: '突击步枪', type: 'ranged', damage: 19, mag: 30, cooldown: 105, range: 110, pellets: 1, spread: 0.005, reloadTime: 1.9, auto: true, bloom: 0.0093, bloomMax: 0.042, bloomDecay: 0.055, moveSpread: 0.016, airSpread: 0.028, adsSpread: 0.45, hipSpread: 0.034, recoil: 0.0090, recoilH: 0.0038, recoilRamp: 1.30, color: 0x222222 },
+    awp: { id: 'awp', name: '狙击步枪', type: 'ranged', damage: 120, mag: 5, cooldown: 1400, range: 160, pellets: 1, spread: 0.0004, reloadTime: 2.6, auto: false, bloom: 0.0200, bloomMax: 0.030, bloomDecay: 0.010, moveSpread: 0.030, airSpread: 0.045, adsSpread: 0.15, hipSpread: 0.070, recoil: 0.0460, recoilH: 0.0060, recoilRamp: 0.45, color: 0x1a3a1a },
+      dmr: { id: 'dmr', name: '连狙', type: 'ranged', damage: 55, mag: 10, cooldown: 300, range: 120, pellets: 1, spread: 0.002, reloadTime: 2.1, auto: false, bloom: 0.0150, bloomMax: 0.022, bloomDecay: 0.035, moveSpread: 0.020, airSpread: 0.032, adsSpread: 0.30, hipSpread: 0.046, recoil: 0.0230, recoilH: 0.0050, recoilRamp: 1.00, color: 0x2a4a2a },
+      lmg: { id: 'lmg', name: '重机枪', type: 'ranged', damage: 16, mag: 125, cooldown: 95, range: 100, pellets: 1, spread: 0.009, reloadTime: 3.8, auto: true, bloom: 0.0070, bloomMax: 0.055, bloomDecay: 0.050, moveSpread: 0.024, airSpread: 0.036, adsSpread: 0.60, hipSpread: 0.042, recoil: 0.0062, recoilH: 0.0042, recoilRamp: 1.70, color: 0x3a3a3a }
   };
 
   var BOXES = [
@@ -417,7 +428,7 @@ var smokeParticles = [];
   var clock = new THREE.Clock();
 
   var SUN_DIR = new THREE.Vector3(0.48, 0.62, 0.30).normalize();
-  var cloudLayer = null;
+  var skyUniforms = null;      // 云已经并进天空 shader，不再有独立的 cloudLayer mesh
   var cloudDrift = 0;
 
   function initThree() {
@@ -444,7 +455,13 @@ var smokeParticles = [];
     buildEnvironment();
 
     // ---- 光照：天光 + 主太阳 + 冷补光 ----
-    var hemi = new THREE.HemisphereLight(0xcfe2ff, 0x55503f, 0.8);
+    // groundColor 原来是 0x55503f，比场地实际的地面暗得多也脏得多：
+    // 场地是沥青罩面 + 夯土，被 2.45 强度的太阳照着，反弹回来的是**中等暖灰**。
+    // 用那个暗橄榄色的后果是所有朝下的面（掩体顶盖底面、集装箱底、枪械与手臂
+    // 的阴面）都糊成深棕——实测掩体顶盖底面只有 rgb(47,39,27)，暗部细节全丢。
+    // 提到 0x6f6858：线性亮度约为原来的 1.8 倍，暗部读得出结构，又没有反弹光
+    // 越过受光面的危险（天光顶色仍然更亮）。
+    var hemi = new THREE.HemisphereLight(0xcfe2ff, 0x6f6858, 0.8);
     scene.add(hemi);
 
     var sun = new THREE.DirectionalLight(0xfff2dc, 2.45);
@@ -484,18 +501,31 @@ var smokeParticles = [];
   }
 
   // 天空：三段渐变 + 日盘 + 日晕 + 漂移云层
+  // 云原来是一块 1600×1600 的 PlaneGeometry 摆在 y=210、跟着相机平移。
+  // 它有个躲不掉的毛病：平面是**有限**的，边缘在水平 800m / 高 210m 处，
+  // 也就是仰角 atan(210/800)=14.7°——天上永远横着一条硬邊，
+  // 边线以下（地平线到 14.7°）一丝云都没有，而且透视会把边缘那圈斑块
+  // 压成一排收敛到天际线的横条。全景截图上方那几道诡异的斜线就是这个。
+  // 现在把云并进天空 shader：按视线方向解算与云平面的交点来采样，
+  // 越接近水平就越淡（smoothstep 到 0）。这样既没有几何边缘，
+  // 透视收敛也是连续的，还省掉一个 mesh 和一次半透明 draw call。
   function buildSky() {
+    var cloudTex = getCloudTexture();
+    cloudTex.wrapS = cloudTex.wrapT = THREE.RepeatWrapping;
+    skyUniforms = {
+      topColor: { value: new THREE.Color(0x2f6ba6) },
+      midColor: { value: new THREE.Color(0x8fb8d8) },
+      bottomColor: { value: new THREE.Color(0xd8e4ea) },
+      sunColor: { value: new THREE.Color(0xfff4d8) },
+      sunDir: { value: SUN_DIR.clone() },
+      cloudMap: { value: cloudTex },
+      cloudOffset: { value: new THREE.Vector2(0, 0) }
+    };
     var skyMat = new THREE.ShaderMaterial({
       side: THREE.BackSide,
       fog: false,
       depthWrite: false,
-      uniforms: {
-        topColor: { value: new THREE.Color(0x2f6ba6) },
-        midColor: { value: new THREE.Color(0x8fb8d8) },
-        bottomColor: { value: new THREE.Color(0xd8e4ea) },
-        sunColor: { value: new THREE.Color(0xfff4d8) },
-        sunDir: { value: SUN_DIR.clone() }
-      },
+      uniforms: skyUniforms,
       vertexShader: [
         'varying vec3 vWorldPosition;',
         'void main(){',
@@ -507,6 +537,7 @@ var smokeParticles = [];
       fragmentShader: [
         'uniform vec3 topColor; uniform vec3 midColor; uniform vec3 bottomColor;',
         'uniform vec3 sunColor; uniform vec3 sunDir;',
+        'uniform sampler2D cloudMap; uniform vec2 cloudOffset;',
         'varying vec3 vWorldPosition;',
         'void main(){',
         '  vec3 dir = normalize(vWorldPosition - cameraPosition);',
@@ -514,10 +545,52 @@ var smokeParticles = [];
         '  vec3 col = mix(bottomColor, midColor, smoothstep(0.42, 0.53, h));',
         '  col = mix(col, topColor, smoothstep(0.55, 0.96, h));',
         '  float sd = max(dot(dir, normalize(sunDir)), 0.0);',
+        // 云：先算再叠日盘，否则日盘会被云糊掉——云在太阳前面时该是被照亮的边缘，
+        // 而不是把整个日盘抹平。这里简化成「云挡不住日盘」。
+        '  float cy = max(dir.y, 0.0);',
+        // dir.xz / cy 是视线与云平面的交点，乘的系数就是「云层高度 / 贴图一格的边长」。
+        // 第一版随手写了 0.021，等于一格 tile 铺一万米——整片天只采到贴图中心
+        // 一小块，结果是一道从天顶抹到地平线的巨大竖向糊斑（截图 32-sky）。
+        // 按角径反推：一簇云占贴图 0.2 格，想让它在天上张 ~11°，需要 tile ≈ 云高，
+        // 所以系数取 1.15 这个量级，而不是 0.02。
+        // 分母用 cy + 0.28 而不是 max(cy, 0.30)：max 在钳位点处导数不连续，
+        // 低于钳位点 uv 就完全不随仰角变化，于是贴图沿视线方向被径向拉成一条条
+        // 竖直光柱（截图 62-sky 地平线上方那一排）。加常数是处处平滑且有界的：
+        // 天顶 /1.28、仰角 17° /0.58、地平线 /0.28，最大拉伸 3.6 倍且没有折点。
+        '  vec2 cuv = dir.xz / (cy + 0.28) * 1.15 + cloudOffset;',
+        // 两次采样、尺度和方向都错开：单层平铺一眼就能看出重复的方格，
+        // 相乘之后周期变成两者的最小公倍数，实际看不出来。
+        // 注意这只能打散**周期性**，贴图内容本身不自环绕的话，tile 边界的密度
+        // 突变照样是一条直线接缝——那个得在 getCloudTexture 里画 3×3 环绕副本解决。
+        '  float c1 = texture2D(cloudMap, cuv).a;',
+        '  float c2 = texture2D(cloudMap, cuv * 0.43 + vec2(0.37, 0.61) - cloudOffset * 0.6).a;',
+        // 两层叠加出来的 alpha 是一片连绵的灰霾，中间没有透出蓝天的缝，
+        // 看着像高层卷云而不是积云。用 smoothstep 提对比度：低值压到 0（露出蓝天），
+        // 高值推到 1（云心结实），边缘自然就锐了。
+        '  float ca = smoothstep(0.13, 0.52, c1 * 0.80 + c2 * 0.52);',
+        // fade 在 0.05~0.28 之间收完：地平线附近云本来就被大气霾吃掉，
+        // 顺手把拉伸最厉害的那一段也一起淡掉。
+        '  ca *= smoothstep(0.05, 0.28, cy) * 0.86;',
+        // 云不是纯白：正对太阳那侧提亮、背面偏冷灰，否则一团纯白 alpha 在
+        // ACES 下就是一块过曝的补丁，看不出体积。
+        // 数值是**线性辐亮度**（下面要过 ACES），所以别写到 1.0 附近——
+        // ACES 把高光压得厉害，0.80 和 1.0 出来几乎一样白，体积感就没了。
+        // 压到 0.42/0.86 落在曲线还接近线性的段，明暗比才留得住。
+        '  vec3 cloudCol = mix(vec3(0.42, 0.44, 0.48), vec3(0.86, 0.84, 0.78), pow(sd, 3.0));',
+        '  col = mix(col, cloudCol, ca);',
         '  col += sunColor * pow(sd, 320.0) * 1.8;',   // 日盘
         '  col += sunColor * pow(sd, 8.0) * 0.20;',    // 日晕
         '  col += sunColor * pow(sd, 2.0) * 0.05;',    // 大范围散射
         '  gl_FragColor = vec4(col, 1.0);',
+        // 这两行不能省。ShaderMaterial 的 fragmentShader 是**原样**使用的，
+        // 渲染器只会自动给内置材质追加色调映射和输出色彩空间转换。
+        // 而 uniform 里的 THREE.Color 在 r152+ 已经被 ColorManagement 转成线性了，
+        // 于是 0x8fb8d8（sRGB 0.72）以线性值 0.48 直接写进 sRGB 帧缓冲——
+        // 天空整体压暗又过饱和，成了深藏青（截图 60/61）。
+        // 补上这两个 chunk 后天空才和场景走同一条 ACES + sRGB 通路：
+        // 中天由 (70,122,177) 回到 (161,195,213)，地平线亮度也终于和雾色对齐。
+        '  #include <tonemapping_fragment>',
+        '  #include <colorspace_fragment>',
         '}'
       ].join('\n')
     });
@@ -525,34 +598,13 @@ var smokeParticles = [];
     skyMesh.frustumCulled = false;
     skyMesh.renderOrder = -2;
     scene.add(skyMesh);
-
-    cloudLayer = new THREE.Mesh(
-      new THREE.PlaneGeometry(1600, 1600),
-      new THREE.MeshBasicMaterial({
-        map: getCloudTexture(),
-        transparent: true,
-        opacity: 0.85,
-        depthWrite: false,
-        fog: false,
-        side: THREE.DoubleSide
-      })
-    );
-    cloudLayer.rotation.x = Math.PI / 2;
-    cloudLayer.position.y = 210;
-    cloudLayer.frustumCulled = false;
-    cloudLayer.renderOrder = -1;
-    scene.add(cloudLayer);
   }
 
   function updateSky(dt) {
     if (skyMesh) skyMesh.position.copy(camera.position);
-    if (cloudLayer) {
-      cloudLayer.position.x = camera.position.x;
-      cloudLayer.position.z = camera.position.z;
-      cloudDrift += dt * 0.0035;
-      if (cloudLayer.material.map) {
-        cloudLayer.material.map.offset.set(cloudDrift, cloudDrift * 0.45);
-      }
+    if (skyUniforms) {
+      cloudDrift += dt * 0.0022;
+      skyUniforms.cloudOffset.value.set(cloudDrift, cloudDrift * 0.45);
     }
   }
 
@@ -647,19 +699,40 @@ var smokeParticles = [];
   }
 
   // 沥青/水泥地面 —— 可平铺
+  // 重做过一轮。原来底色 #3b4149（59,65,73）是一块偏蓝的深板岩，实测地面渲染亮度
+  // 只有 0.196，而掩体块身是 0.349 —— 差 1.8 倍。于是整个场地读成「一堆浅色盒子
+  // 摆在近黑的地上」，也是画面显得阴沉的主因（地面占 40~66% 的像素）。
+  // 三处改：
+  //   1) 底色抬到 (88,86,80) 并去蓝转微暖 → 目标亮度 0.29，和块身 0.349 只差 1.2 倍，
+  //      同时仍比块底座（0.199）亮，块和地的接缝还在。
+  //   2) 骨料亮点 2600 → 1500、最大 alpha 0.22 → 0.14。原来俯视像撒了一层雪。
+  //   3) 加**伸缩缝**：真实机坪是一格一格浇的。贴图内切 3×3、外面 repeat 4 次，
+  //      合起来约每 8.3m 一道缝，正好是重型机坪的尺度。
+  //      这一笔顺便把「平铺」变成了特征：缝对齐到 tile 边界，看到的是格子而不是重复。
   function getAsphaltTexture() {
     return makeTex('asphalt', 512, function (ctx, w, h) {
-      ctx.fillStyle = '#3b4149'; ctx.fillRect(0, 0, w, h);
-      // 大块色差
+      ctx.fillStyle = '#585650'; ctx.fillRect(0, 0, w, h);
+      // 大块色差。冷暖各来一半：真实水泥的批次差是往两个方向偏的，
+      // 全部往一个方向偏只会整体染色，看不出斑
       for (var i = 0; i < 26; i++) {
-        var g = 40 + Math.floor(Math.random() * 34);
-        ctx.fillStyle = 'rgba(' + g + ',' + (g + 6) + ',' + (g + 12) + ',0.5)';
+        var g = 74 + Math.floor(Math.random() * 30);
+        ctx.fillStyle = i % 2
+          ? 'rgba(' + (g + 8) + ',' + (g + 5) + ',' + g + ',0.5)'
+          : 'rgba(' + g + ',' + (g + 4) + ',' + (g + 9) + ',0.5)';
         var bw = 40 + Math.random() * 120, bh = 40 + Math.random() * 120;
         ctx.fillRect(Math.random() * w, Math.random() * h, bw, bh);
       }
+      // 伸缩缝：暗线 + 紧贴一侧的亮边，才有凹槽的错觉（和防爆块的模板缝同一手法）
+      for (var j = 1; j < 3; j++) {
+        var p = w * j / 3;
+        ctx.fillStyle = 'rgba(26,25,22,0.45)';
+        ctx.fillRect(p - 1.4, 0, 2.8, h); ctx.fillRect(0, p - 1.4, w, 2.8);
+        ctx.fillStyle = 'rgba(196,192,184,0.16)';
+        ctx.fillRect(p + 1.4, 0, 1.4, h); ctx.fillRect(0, p + 1.4, w, 1.4);
+      }
       // 骨料颗粒
-      speckle(ctx, w, h, 2600, 0.04, 0.22, 1.6, function (a) { return 'rgba(210,215,225,' + a + ')'; });
-      speckle(ctx, w, h, 1800, 0.05, 0.3, 1.4, function (a) { return 'rgba(12,14,18,' + a + ')'; });
+      speckle(ctx, w, h, 1500, 0.04, 0.14, 1.6, function (a) { return 'rgba(206,202,192,' + a + ')'; });
+      speckle(ctx, w, h, 1800, 0.05, 0.3, 1.4, function (a) { return 'rgba(18,16,14,' + a + ')'; });
       // 裂缝
       ctx.strokeStyle = 'rgba(10,12,15,0.5)';
       for (var k = 0; k < 7; k++) {
@@ -672,22 +745,36 @@ var smokeParticles = [];
       }
       // 油渍
       speckle(ctx, w, h, 5, 0.1, 0.22, 34, function (a) { return 'rgba(0,0,0,' + a + ')'; });
-    }, { repeat: [12, 12] });
+      // repeat 12 → 4 → 7。这张图只铺 99×99 的场内机坪（不再是 300×300 的整块地）。
+      // 12 时缝密到每 2.75m 一道，俯视是一张纱窗；退到 4 之后缝的间距对了，
+      // 但一格 24.8m 意味着一个纹素 4.8cm、图里那些 40~120px 的色斑放大到 3.7m，
+      // 眼平视角看就是一摊摊没对上焦的糊斑（截图 91 地面）。
+      // 7 是两头的折中：一格 14.1m（纹素 2.76cm），伸缩缝每 4.7m 一道 —— 仍是重型
+      // 机坪的真实板块尺寸，而色斑缩到 2.1m，重新读成沥青的批次色差而不是污渍。
+    }, { repeat: [7, 7] });
   }
 
   // 地面标线覆盖层（透明底，1:1 铺在竞技场上）
+  // 这一层的颜色下调过两轮。标线画在 MeshStandardMaterial 上，纯白 albedo
+  // 经 ACES + 2.45 太阳会顶到过曝，结果不像「刷在沥青上的漆」而像地上嵌了灯带；
+  // 全景截图里最抢眼的三样东西是外圈红框、中央的黄 H、直升机坪白圈，
+  // 全是这里画的。露天磨过的路漆本来就是脏的，压暗才是写实方向。
+  // 第二轮又整体降了一档：第一轮之后眼平视角里两条蓝色出生区边框仍然是全画面
+  // 最亮最饱和的东西，读成发光的霓虹带（截图 91）。原因是 albedo 只降到 ~0.5
+  // 反射率，而阳光直射会再把它抬上去；真实道路漆在沥青上大约 0.2~0.25，
+  // 所以蓝/橙/红/黄全部再砍到原值的六七成——仍然一眼能分辨，但不再自发光。
   function getMarkingTexture() {
     return makeTex('markings', 1024, function (ctx, w, h) {
       ctx.clearRect(0, 0, w, h);
       var C = w / 2;
       // 中央直升机坪
-      ctx.strokeStyle = 'rgba(240,244,250,0.55)';
+      ctx.strokeStyle = 'rgba(150,154,160,0.46)';
       ctx.lineWidth = 7;
       ctx.beginPath(); ctx.arc(C, C, 168, 0, Math.PI * 2); ctx.stroke();
       ctx.lineWidth = 5;
       ctx.beginPath(); ctx.arc(C, C, 150, 0, Math.PI * 2); ctx.stroke();
       // "H"
-      ctx.strokeStyle = 'rgba(255,236,140,0.85)';
+      ctx.strokeStyle = 'rgba(168,152,92,0.76)';
       ctx.lineWidth = 22; ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(C - 54, C - 70); ctx.lineTo(C - 54, C + 70);
@@ -702,21 +789,22 @@ var smokeParticles = [];
         ctx.strokeRect(cx - 150, cy - 60, 300, 120);
         ctx.setLineDash([]);
       }
-      zone(C, 120, 'rgba(90,170,255,0.7)');
-      zone(C, h - 120, 'rgba(90,170,255,0.7)');
-      zone(120, C, 'rgba(255,150,70,0.7)');
-      zone(w - 120, C, 'rgba(255,150,70,0.7)');
+      zone(C, 120, 'rgba(52,84,120,0.62)');
+      zone(C, h - 120, 'rgba(52,84,120,0.62)');
+      zone(120, C, 'rgba(128,76,38,0.62)');
+      zone(w - 120, C, 'rgba(128,76,38,0.62)');
       // 跑道虚线
-      ctx.strokeStyle = 'rgba(240,220,120,0.4)';
+      ctx.strokeStyle = 'rgba(140,128,76,0.34)';
       ctx.lineWidth = 5; ctx.setLineDash([40, 40]);
       ctx.beginPath(); ctx.moveTo(0, C); ctx.lineTo(w, C); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(C, 0); ctx.lineTo(C, h); ctx.stroke();
       ctx.setLineDash([]);
       // 边界危险条
-      ctx.strokeStyle = 'rgba(255,90,60,0.75)';
+      ctx.strokeStyle = 'rgba(122,50,36,0.66)';
       ctx.lineWidth = 12; ctx.strokeRect(26, 26, w - 52, h - 52);
-      // 磨损脏污
-      speckle(ctx, w, h, 260, 0.02, 0.09, 26, function (a) { return 'rgba(20,18,14,' + a + ')'; });
+      // 磨损脏污。260 → 420、半径抬到 30：漆面必须被啃掉一部分，
+      // 一条粗细均匀、通到底的实线在露天场地上是不存在的。
+      speckle(ctx, w, h, 420, 0.03, 0.13, 30, function (a) { return 'rgba(20,18,14,' + a + ')'; });
     });
   }
 
@@ -724,9 +812,14 @@ var smokeParticles = [];
   function getContainerTexture(hex) {
     var key = 'cont_' + hex;
     return makeTex(key, 512, function (ctx, w, h) {
+      // 这里原来是 new THREE.Color(hex) 然后 base.r * 255 —— 一个色彩管理的坑。
+      // three r152 之后 ColorManagement 默认开着，Color 内部存的是**线性**值，
+      // 而 canvas 的 fillStyle 吃的是 sRGB。把线性数当 sRGB 填进去，
+      // 0xb5533f (181,83,63) 会变成 (118,22,13)：又暗一大截、又过饱和。
+      // getStyle() 会做 working→sRGB 的反变换，这才是往 canvas 上画的正确取值。
+      // 集装箱那种「颜色又浓又闷」的塑料感就是这一处来的。
       var base = new THREE.Color(hex);
-      var r = Math.floor(base.r * 255), g = Math.floor(base.g * 255), b = Math.floor(base.b * 255);
-      ctx.fillStyle = 'rgb(' + r + ',' + g + ',' + b + ')';
+      ctx.fillStyle = base.getStyle();
       ctx.fillRect(0, 0, w, h);
       // 竖向波纹（明暗交替）
       var ribs = 26, rw = w / ribs;
@@ -813,9 +906,12 @@ var smokeParticles = [];
   }
 
   // 沙袋贴图
+  // 底色和袋色整体压了约 28%。原来底 #8a7a4e、袋心最高到 R=170，
+  // 在 2.45 强度的太阳下渲成一片发亮的奶油色，俯视图里四道沙袋墙比掩体还显眼。
+  // 麻布袋装湿沙是很闷的土黄，本来就该是场地里较暗的一档。
   function getSandbagTexture() {
     return makeTex('sandbag', 256, function (ctx, w, h) {
-      ctx.fillStyle = '#8a7a4e'; ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = '#635838'; ctx.fillRect(0, 0, w, h);
       var rows = 4, cols = 5;
       var bw = w / cols, bh = h / rows;
       for (var ry = 0; ry < rows; ry++) {
@@ -823,9 +919,9 @@ var smokeParticles = [];
           var ox = (ry % 2) * bw * 0.5;
           var x = cx * bw + ox, y = ry * bh;
           var g = ctx.createRadialGradient(x + bw * 0.5, y + bh * 0.4, 4, x + bw * 0.5, y + bh * 0.5, bw * 0.7);
-          var tint = 120 + Math.floor(Math.random() * 30);
-          g.addColorStop(0, 'rgb(' + (tint + 20) + ',' + (tint + 6) + ',' + (tint - 40) + ')');
-          g.addColorStop(1, 'rgb(' + (tint - 40) + ',' + (tint - 50) + ',' + (tint - 80) + ')');
+          var tint = 88 + Math.floor(Math.random() * 24);
+          g.addColorStop(0, 'rgb(' + (tint + 18) + ',' + (tint + 5) + ',' + Math.max(0, tint - 30) + ')');
+          g.addColorStop(1, 'rgb(' + Math.max(0, tint - 34) + ',' + Math.max(0, tint - 42) + ',' + Math.max(0, tint - 62) + ')');
           ctx.fillStyle = g;
           ctx.beginPath();
           if (ctx.roundRect) ctx.roundRect(x + 2, y + 2, bw - 4, bh - 4, 12); else ctx.rect(x + 2, y + 2, bw - 4, bh - 4);
@@ -850,20 +946,81 @@ var smokeParticles = [];
   }
 
   // 云层贴图（软斑块）
+  // 原来是 40 个大小随机、均匀撒开的圆形径向渐变——间距均匀就等于没有结构，
+  // 摊在天上是一层麻子而不是云。真实积云是**成团**的：一簇里若干个大小不等的
+  // 泡挤在一起，横向铺得比纵向宽（底部被逆温层压平）。
+  // 所以改成 9 簇 × 每簇 7~13 个泡，泡的 y 半径只有 x 的 0.52 倍。
+  //
+  // 每个泡都要画 9 遍（3×3 环绕偏移）。这张图在天空 shader 里是平铺采样的，
+  // 内容不自环绕的话，tile 交界处云的密度会突变 —— 实际看到的就是天上一张
+  // 横竖笔直的网格（截图 62-sky）。画 9 遍是纯加载期开销，运行时零成本。
   function getCloudTexture() {
     return makeTex('cloud', 512, function (ctx, w, h) {
       ctx.clearRect(0, 0, w, h);
-      for (var i = 0; i < 40; i++) {
-        var x = Math.random() * w, y = Math.random() * h;
-        var rad = 30 + Math.random() * 90;
-        var g = ctx.createRadialGradient(x, y, 0, x, y, rad);
-        var a = 0.12 + Math.random() * 0.28;
-        g.addColorStop(0, 'rgba(255,255,255,' + a + ')');
-        g.addColorStop(1, 'rgba(255,255,255,0)');
-        ctx.fillStyle = g;
-        ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill();
+      for (var c = 0; c < 9; c++) {
+        var cx = Math.random() * w, cy = Math.random() * h;
+        var spread = 46 + Math.random() * 54;
+        var puffs = 7 + Math.floor(Math.random() * 7);
+        for (var i = 0; i < puffs; i++) {
+          // 簇内偏移用 sqrt 分布：泡往中心聚，边缘稀，团才有实心的核
+          var t = Math.sqrt(Math.random()), ang = Math.random() * Math.PI * 2;
+          var px = cx + Math.cos(ang) * spread * t * 1.5;
+          var py = cy + Math.sin(ang) * spread * t * 0.62;
+          var rad = spread * (0.36 + Math.random() * 0.5);
+          var a = (0.14 + Math.random() * 0.22) * (1.15 - t * 0.55);   // 中心的泡更厚
+          for (var wx = -1; wx <= 1; wx++) for (var wy = -1; wy <= 1; wy++) {
+            var x = px + wx * w, y = py + wy * h;
+            // 离画布太远的环绕副本直接跳过，别白画
+            if (x < -rad * 2 || x > w + rad * 2 || y < -rad * 2 || y > h + rad * 2) continue;
+            var g = ctx.createRadialGradient(x, y, rad * 0.12, x, y, rad);
+            g.addColorStop(0, 'rgba(255,255,255,' + a.toFixed(3) + ')');
+            g.addColorStop(0.55, 'rgba(255,255,255,' + (a * 0.52).toFixed(3) + ')');
+            g.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = g;
+            ctx.save();
+            ctx.translate(x, y); ctx.scale(1, 0.52); ctx.translate(-x, -y);
+            ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill();
+            ctx.restore();
+          }
+        }
       }
-    }, { repeat: [3, 3] });
+    }, { repeat: [1, 1] });
+  }
+
+  // 场外土面（砾石/硬土）。原来场内场外共用一张 300×300 的水泥机坪贴图，
+  // 于是防爆墙外面也铺着一模一样的伸缩缝板 —— 场地边界完全读不出来，
+  // 整个世界就是一块无限大的水泥砖。真实基地是「墙内浇混凝土、墙外是压实的土」。
+  // 这一层还顺手把画面的色相拉开了：土是暖褐，机坪是中性灰，两者一交界，
+  // 「场地」这个概念才立起来。
+  function getDirtTexture() {
+    return makeTex('dirt', 512, function (ctx, w, h) {
+      ctx.fillStyle = '#6b6052'; ctx.fillRect(0, 0, w, h);
+      // 大块土色差：干湿不均 + 车辙压过的深浅
+      for (var i = 0; i < 30; i++) {
+        var r = 96 + Math.floor(Math.random() * 34);
+        ctx.globalAlpha = 0.22 + Math.random() * 0.26;
+        ctx.fillStyle = 'rgb(' + r + ',' + Math.floor(r * 0.90) + ',' + Math.floor(r * 0.76) + ')';
+        ctx.beginPath();
+        ctx.ellipse(Math.random() * w, Math.random() * h,
+          w * (0.08 + Math.random() * 0.22), h * (0.06 + Math.random() * 0.20),
+          Math.random() * Math.PI, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      // 稀疏矮灌丛：暗绿的小团。纯土面在大面积上还是太干净，
+      // 撒一点暗色植被才有「野地」的杂乱感（暗色所以不会像树那样抢注意）
+      for (var b = 0; b < 26; b++) {
+        var bx = Math.random() * w, by = Math.random() * h, br = 5 + Math.random() * 13;
+        var g = ctx.createRadialGradient(bx, by, 0, bx, by, br);
+        g.addColorStop(0, 'rgba(52,58,38,0.62)');
+        g.addColorStop(1, 'rgba(52,58,38,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.fill();
+      }
+      // 碎石：亮暗两层，暗的在下（阴影）、亮的在上（受光面），才有颗粒的立体感
+      speckle(ctx, w, h, 2200, 0.06, 0.30, 2.2, function (a) { return 'rgba(38,32,26,' + a + ')'; });
+      speckle(ctx, w, h, 1800, 0.05, 0.22, 1.8, function (a) { return 'rgba(186,174,156,' + a + ')'; });
+    }, { repeat: [22, 22] });
   }
 
   // 兼容旧调用
@@ -872,14 +1029,28 @@ var smokeParticles = [];
   function buildArena() {
     var maxAniso = renderer.capabilities.getMaxAnisotropy();
 
-    // ---- 地面：平铺沥青 + 标线覆盖层 ----
+    // ---- 地面：场外土面 + 场内水泥机坪 + 标线覆盖层 ----
     var ground = new THREE.Mesh(
       new THREE.PlaneGeometry(300, 300),
-      new THREE.MeshStandardMaterial({ map: getAsphaltTexture(), roughness: 0.97, metalness: 0.0, color: 0xcfd4da })
+      new THREE.MeshStandardMaterial({ map: getDirtTexture(), roughness: 0.98, metalness: 0.0, color: 0xb0a695 })
     );
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     scene.add(ground);
+
+    // 机坪：99×99，刚好盖住 ±47.5 的防爆墙（墙外皮 ±48.25），
+    // 墙脚两侧都还是水泥，不会露出土/水泥的接缝正好压在墙下这种巧合感。
+    var apron = new THREE.Mesh(
+      new THREE.PlaneGeometry(99, 99),
+      // color 从 0xcfd4da 换成 0xc9c6c2：亮度基本不动，但去掉那点蓝偏。
+      // 原来天光(#cfe2ff)、补光(#9dc0e8)、地面 tint 三层蓝叠在一起，
+      // 整个画面就是一张蓝滤镜；地面占 40% 以上的像素，是最该先中性化的那一层。
+      new THREE.MeshStandardMaterial({ map: getAsphaltTexture(), roughness: 0.97, metalness: 0.0, color: 0xc9c6c2 })
+    );
+    apron.rotation.x = -Math.PI / 2;
+    apron.position.y = 0.012;
+    apron.receiveShadow = true;
+    scene.add(apron);
 
     var markTex = getMarkingTexture();
     var markings = new THREE.Mesh(
@@ -887,21 +1058,34 @@ var smokeParticles = [];
       new THREE.MeshStandardMaterial({ map: markTex, transparent: true, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })
     );
     markings.rotation.x = -Math.PI / 2;
-    markings.position.y = 0.012;
+    // 0.012 → 0.05：必须抬到直升机坪**顶面之上**。原来坪是 0.12 高、中心 y=0.06，
+    // 也就是占满 0~0.12，而标线在 0.012 —— 那个黄色的 "H" 一直被埋在坪的内部，
+    // 从进游戏第一天起就没被看见过。坪同时改薄到 0.04（见下），H 现在落在钢板上，
+    // 这也正是真实直升机坪的样子：漆是刷在坪面上的，不是刷在坪旁边的地上。
+    markings.position.y = 0.05;
     markings.receiveShadow = true;
     scene.add(markings);
 
-    // 直升机坪金属圆盘
+    // 直升机坪金属圆盘。0.12 厚 → 0.04：把顶面压到标线（0.05）之下
+    // 原来 color 0x555a60 + metalness 0.5 在俯视图里是一个近黑的洞（截图 60/72）：
+    // metalness 会按比例吃掉漫反射，0.5 就等于把本来已经偏暗的 albedo 再砍一半，
+    // 而朝上的粗糙面从环境贴图拿到的镜面反射又补不回来。
+    // 改成镀锌钢板的做法：albedo 提亮、金属度降到 0.28、粗糙度提到 0.72，
+    // 让它比周围沥青**亮**一档，中心区读成抬起的平台而不是坑。
     var helipad = new THREE.Mesh(
-      new THREE.CylinderGeometry(9.5, 9.5, 0.12, 48),
-      new THREE.MeshStandardMaterial({ map: getMetalTexture(), color: 0x555a60, roughness: 0.6, metalness: 0.5 })
+      new THREE.CylinderGeometry(9.5, 9.5, 0.04, 48),
+      new THREE.MeshStandardMaterial({ map: getMetalTexture(), color: 0x8f949b, roughness: 0.72, metalness: 0.28 })
     );
-    helipad.position.set(0, 0.06, 0);
+    helipad.position.set(0, 0.02, 0);
     helipad.receiveShadow = true;
     scene.add(helipad);
 
     // 积水反光块（低洼处）
-    var puddleMat = new THREE.MeshStandardMaterial({ color: 0x2a3138, roughness: 0.08, metalness: 0.5, transparent: true, opacity: 0.55 });
+    // metalness 0.5 → 0：水是电介质。金属度给 0.5 会让它变成一块「半金属镜」——
+    // 漫反射被砍半、镜面又被 albedo 染色，结果是四片死黑的圆斑而不是反着天光的水。
+    // 金属度 0 + 低粗糙度时 MeshStandardMaterial 会走 Fresnel：正视浅、斜视强，
+    // 这正是真实水面的样子（走过去才会看到天空的倒影）。
+    var puddleMat = new THREE.MeshStandardMaterial({ color: 0x2f363d, roughness: 0.07, metalness: 0.0, transparent: true, opacity: 0.5 });
     [[-14, 6, 3], [16, -9, 2.4], [7, 18, 2], [-22, -14, 2.6]].forEach(function (p) {
       var pud = new THREE.Mesh(new THREE.CircleGeometry(p[2], 20), puddleMat);
       pud.rotation.x = -Math.PI / 2;
@@ -913,7 +1097,9 @@ var smokeParticles = [];
     var concreteTex = getConcreteTexture();
     concreteTex.wrapS = concreteTex.wrapT = THREE.RepeatWrapping;
     var wallMat = new THREE.MeshStandardMaterial({ map: concreteTex, color: 0x9aa0a2, roughness: 0.92, metalness: 0.02 });
-    var capMat = new THREE.MeshStandardMaterial({ color: 0x3c4046, roughness: 0.68, metalness: 0.45 });
+    // 围墙压顶。同样是半金属的坑：metalness 0.45 把这条 97m 长的压顶压成一道死黑边，
+    // 从场地里往外看就是「墙顶被剪掉了」。降到 0.22、albedo 抬到 0x565c63。
+    var capMat = new THREE.MeshStandardMaterial({ color: 0x565c63, roughness: 0.7, metalness: 0.22 });
     var walls = [
       { x: 0, z: -47.5, w: 97, d: 1.5 },
       { x: 0, z: 47.5, w: 97, d: 1.5 },
@@ -964,7 +1150,7 @@ var smokeParticles = [];
       } else if (b.w <= 2.2 && b.d <= 2.2) {
         buildCrate(b, crateTex);
       } else {
-        buildConcreteBlock(b, concreteTex, i);
+        buildConcreteBlock(b, i);
       }
     });
 
@@ -979,13 +1165,18 @@ var smokeParticles = [];
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
     tex.repeat.set(Math.max(1, Math.round(b.w / 6)), 1);
     tex.needsUpdate = true;
-    var mat = new THREE.MeshStandardMaterial({ map: tex, color: color, roughness: 0.62, metalness: 0.35 });
+    // 颜色已经烤进贴图了，材质 color 必须留白。原来这里又乘一遍 color，
+    // 等于把箱体颜色平方，配合上面那个线性/sRGB 的错，才有那种发闷的塑料色。
+    var mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.62, metalness: 0.35 });
     var mesh = new THREE.Mesh(new THREE.BoxGeometry(b.w, b.h, b.d), mat);
     mesh.position.set(b.x, b.h / 2, b.z);
     mesh.castShadow = true; mesh.receiveShadow = true;
     scene.add(mesh);
     // 角件（8个黑色铸钢角块）
-    var cornerMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.7, metalness: 0.4 });
+    // 0x1a1a1a + metalness 0.4 等于纯黑：角件在画面里直接消失，
+    // 集装箱四个角变成没有收口的锐边。真实角件是风化的铸钢（表面主要是氧化层，
+    // 属电介质），所以抬 albedo、降金属度，让这八个块读得出体积。
+    var cornerMat = new THREE.MeshStandardMaterial({ color: 0x33322f, roughness: 0.75, metalness: 0.2 });
     var hw = b.w / 2, hh = b.h / 2, hd = b.d / 2, cs = 0.28;
     for (var sx = -1; sx <= 1; sx += 2)
       for (var sy = -1; sy <= 1; sy += 2)
@@ -994,8 +1185,17 @@ var smokeParticles = [];
           corner.position.set(b.x + sx * (hw - cs / 2), b.h / 2 + sy * (hh - cs / 2), b.z + sz * (hd - cs / 2));
           scene.add(corner);
         }
-    // 顶盖略深，避免顶面过亮
-    var top = new THREE.Mesh(new THREE.BoxGeometry(b.w + 0.02, 0.06, b.d + 0.02), new THREE.MeshStandardMaterial({ color: color, roughness: 0.7, metalness: 0.3 }));
+    // 顶盖。原来是 color: color，也就是「箱体的纯色、一点污渍都没有」，
+    // 俯视时那块干净的纯色板比箱身还抢眼。第一版乘 0.55 压成阴面，但那是在
+    // 箱体贴图还被重复上色（偏暗）的时候定的；贴图色彩空间修好之后，0.55
+    // 在俯视图里就变成了一块块近黑的板（截图 72，蓝箱顶 0x2f5f86*0.55=0x1a3449）。
+    // 改成往灰尘色插值而不是整体压暗：集装箱顶常年积灰，是**褪色**不是变黑，
+    // 亮度基本保住、饱和度掉下来，俯视时既不抢眼也不成黑洞。
+    var top = new THREE.Mesh(new THREE.BoxGeometry(b.w + 0.02, 0.06, b.d + 0.02),
+      new THREE.MeshStandardMaterial({
+        color: new THREE.Color(color).lerp(new THREE.Color(0x8e8b80), 0.42),
+        roughness: 0.9, metalness: 0.16
+      }));
     top.position.set(b.x, b.h, b.z);
     top.receiveShadow = true;
     scene.add(top);
@@ -1034,7 +1234,13 @@ var smokeParticles = [];
     mesh.position.set(b.x, b.h / 2, b.z);
     mesh.castShadow = true; mesh.receiveShadow = true;
     scene.add(mesh);
-    var capMat = new THREE.MeshStandardMaterial({ color: 0x3a4450, roughness: 0.5, metalness: 0.5 });
+    // 立柱顶帽。原来 0x3a4450 + metalness 0.5，俯视图里是一整块近黑的板
+    // （2.3×20.3 的顶帽，一根就是 47 m²，画面里四大块黑斑就是它们，实测
+     // rgb(30,49,74)——比 albedo 还暗，且被环境贴图的蓝天染成了藏青）。
+    // 半金属（0.4~0.6）在物理上不存在，只会把漫反射按比例删掉；
+    // 压顶是**涂装钢板**，金属度给 0.25、albedo 抬到 0x5d646c：
+    // 仍明显比柱身混凝土（0x9a9c98）暗一档，压顶的收边关系保住，但不再是黑洞。
+    var capMat = new THREE.MeshStandardMaterial({ color: 0x5d646c, roughness: 0.62, metalness: 0.25 });
     var cap = new THREE.Mesh(new THREE.BoxGeometry(b.w + 0.3, 0.22, b.d + 0.3), capMat);
     cap.position.set(b.x, b.h + 0.1, b.z); cap.castShadow = true; scene.add(cap);
     var base = new THREE.Mesh(new THREE.BoxGeometry(b.w + 0.4, 0.3, b.d + 0.4), capMat);
@@ -1051,22 +1257,159 @@ var smokeParticles = [];
     scene.add(mesh);
   }
 
-  // 混凝土块 / 金属货箱
-  function buildConcreteBlock(b, concreteTex, i) {
-    var t = concreteTex.clone(); t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(Math.max(1, Math.round(b.w / 2)), Math.max(1, Math.round(b.h / 2)));
-    t.needsUpdate = true;
-    var mat = new THREE.MeshStandardMaterial({ map: t, color: i % 2 ? 0x9a9488 : 0x8f9490, roughness: 0.9, metalness: 0.05 });
-    var mesh = new THREE.Mesh(new THREE.BoxGeometry(b.w, b.h, b.d), mat);
-    mesh.position.set(b.x, b.h / 2, b.z);
-    mesh.castShadow = true; mesh.receiveShadow = true;
-    scene.add(mesh);
-    // 顶部危险条
-    var stripe = new THREE.Mesh(
-      new THREE.BoxGeometry(b.w + 0.03, 0.06, b.d + 0.03),
-      new THREE.MeshStandardMaterial({ color: 0xe0a020, roughness: 0.6 })
-    );
-    stripe.position.set(b.x, b.h + 0.03, b.z); scene.add(stripe);
+  // 混凝土防爆块贴图。三个变体（浇筑色差 + 脏污分布不同），24 个块才不至于像复制粘贴。
+  // 512 尺寸、**repeat 保持 1:1**：BoxGeometry 六个面的 UV 都是 0..1，所以
+  // 「一个面上只该出现一次」的细节（模板板缝、拉杆孔、顶沿流锈）不会被平铺切碎。
+  // 原来这里是 concreteTex 按 w/2 × h/2 平铺，整面只有一层灰噪声——而这类块占了
+  // 掩体总数的一半（47 个里 24 个，多为 4×3×4 和 3×3×3），全是同一片灰噪声，
+  // 这就是全景截图里「一堆没贴图的程序员方块」的主要来源。
+  function getBlockTexture(variant) {
+    // 这三组色比「真实混凝土的反射率」暗一截，是**量出来的**，不是凭感觉调的。
+    // 实测（同一批面、同一套灯光，只改 albedo）：渲染亮度 ≈ albedo_sRGB ^ 1.36
+    //     #6b675f(107) → 0.353 | #565349(86) → 0.262 | #413f38(65) → 0.179
+    // 第一版用的是照片级的水泥灰（#8e8b80 一档），渲出来块身亮度 0.472，
+    // 而天空只有 0.466 —— 24 个掩体成了画面里最亮的东西，明度秩序整个反了，
+    // 所以远看就是一堆白色泡沫箱子。按上面的幂律反解，乘 0.77 落到 0.33。
+    // 教训：ACES + 2.45 强度的太阳会把中灰顶到近白，贴图的 albedo 必须
+    // 明显低于实物的反射率，光靠肉眼看贴图本身是判断不出来的。
+    var tones = [
+      ['#6d6b63', '#5f5d55', '#7c7970'],
+      ['#706e69', '#62605c', '#807e78'],
+      ['#6a655c', '#5c5750', '#79746a']
+    ][variant];
+    return makeTex('blk_' + variant, 512, function (ctx, w, h) {
+      ctx.fillStyle = tones[0]; ctx.fillRect(0, 0, w, h);
+      // 浇筑批次色差：几块很淡的大色斑。没有这一层，整面就是一个死板的均匀灰
+      for (var i = 0; i < 7; i++) {
+        ctx.fillStyle = i % 2 ? tones[1] : tones[2];
+        ctx.globalAlpha = 0.16 + Math.random() * 0.14;
+        ctx.beginPath();
+        ctx.ellipse(Math.random() * w, Math.random() * h,
+          w * (0.14 + Math.random() * 0.20), h * (0.10 + Math.random() * 0.18),
+          Math.random() * Math.PI, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      // 模板板缝。做成「暗线 + 紧贴下方一道亮边」才有凹进去的错觉，
+      // 单画一条暗线只会像用马克笔描了一圈。
+      function seam(x1, y1, x2, y2, a) {
+        ctx.strokeStyle = 'rgba(48,46,42,' + a + ')'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(x1, y1 + 3); ctx.lineTo(x2, y2 + 3); ctx.stroke();
+      }
+      var m = w * 0.055;
+      seam(m, m, w - m, m, 0.42);
+      seam(m, h - m, w - m, h - m, 0.42);
+      seam(m, h * 0.5, w - m, h * 0.5, 0.36);   // 上下两块模板的拼缝
+      ctx.strokeStyle = 'rgba(48,46,42,0.34)'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(m, m); ctx.lineTo(m, h - m); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(w - m, m); ctx.lineTo(w - m, h - m); ctx.stroke();
+      // 拉杆孔：浇筑后用砂浆封过，所以是「暗孔 + 一圈略亮的补痕」，不是纯黑点
+      for (var cy = 0; cy < 2; cy++) for (var cx = 0; cx < 3; cx++) {
+        var px = w * (0.22 + cx * 0.28), py = h * (0.27 + cy * 0.46);
+        ctx.fillStyle = 'rgba(215,212,203,0.30)';
+        ctx.beginPath(); ctx.arc(px, py, 11, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(40,38,34,0.55)';
+        ctx.beginPath(); ctx.arc(px, py, 5.5, 0, Math.PI * 2); ctx.fill();
+      }
+      // 顶沿往下的流锈/雨痕。混凝土上最能读出「露天放了很多年」的一笔
+      for (var s = 0; s < 14; s++) {
+        var len = h * (0.15 + Math.random() * 0.50);
+        var grd = ctx.createLinearGradient(0, 0, 0, len);
+        grd.addColorStop(0, 'rgba(96,74,48,0.30)');
+        grd.addColorStop(1, 'rgba(96,74,48,0)');
+        ctx.fillStyle = grd;
+        ctx.fillRect(Math.random() * w, 0, 3 + Math.random() * 6, len);
+      }
+      // 底部泥线。块的「重量感」全靠这一笔压住：不脏底边的话，
+      // 块看起来是浮在地面上的，而不是压在地上的。
+      var dirt = ctx.createLinearGradient(0, h, 0, h * 0.66);
+      dirt.addColorStop(0, 'rgba(52,45,34,0.55)');
+      dirt.addColorStop(1, 'rgba(52,45,34,0)');
+      ctx.fillStyle = dirt; ctx.fillRect(0, h * 0.66, w, h * 0.34);
+      // 崩边：磕掉一小块，露出里面颜色更浅的骨料
+      for (var k = 0; k < 5; k++) {
+        ctx.fillStyle = 'rgba(226,222,210,0.5)';
+        var ex = Math.random() < 0.5 ? Math.random() * w * 0.20 : w - Math.random() * w * 0.20;
+        var ey = Math.random() < 0.5 ? Math.random() * h * 0.14 : h - Math.random() * h * 0.14;
+        ctx.beginPath();
+        for (var p = 0; p < 6; p++) {
+          var a2 = p / 6 * Math.PI * 2, rr = 7 + Math.random() * 12;
+          var qx = ex + Math.cos(a2) * rr, qy = ey + Math.sin(a2) * rr;
+          if (p === 0) ctx.moveTo(qx, qy); else ctx.lineTo(qx, qy);
+        }
+        ctx.closePath(); ctx.fill();
+      }
+      // 骨料颗粒：一层暗一层亮，只用暗的会把整面压灰
+      speckle(ctx, w, h, 900, 0.03, 0.13, 2.6, function (a) { return 'rgba(30,28,24,' + a + ')'; });
+      speckle(ctx, w, h, 400, 0.03, 0.12, 2.2, function (a) { return 'rgba(255,255,252,' + a + ')'; });
+    });
+  }
+
+  // 防爆块共用的材质（24 个块共用，不要每块 new 一套）
+  var BLK_MATS = null;
+  function blockMats() {
+    if (BLK_MATS) return BLK_MATS;
+    BLK_MATS = {
+      // 底座压暗、压顶提亮。一块灰立方体最缺的就是明度梯度，
+      // 靠这两块就能让单个块自己有「下重上轻」的层次。
+      // 三段的目标渲染亮度是定好的：底座 0.20 < 地面 0.28 < 块身 0.33 < 压顶 0.40 < 天空 0.47。
+      // 底座必须比地面**更暗**，块和地才有接缝感；压顶必须比天空更暗，
+      // 否则轮廓线在天际线上就断掉了。数值都按 albedo^1.36 反解（见 getBlockTexture）。
+      foot: new THREE.MeshStandardMaterial({ color: 0x47443f, roughness: 0.95, metalness: 0.02 }),
+      cap: new THREE.MeshStandardMaterial({ color: 0x7c7870, roughness: 0.88, metalness: 0.03 }),
+      // 危险条。原来是 0xe0a020——在 ACES + 曝光 1.02 下几乎是自发光的荧光黄，
+      // 两张全景截图里这条边比块本身还抢眼。露天几年的警示漆是脏掉的土黄。
+      // 0x9b7828 还是亮到 0.454（和天空齐平），再压一档到 0.36：
+      // 比块身（0.33）高一点点就够「醒目」了，警示条不该抢过天空。
+      haz: new THREE.MeshStandardMaterial({ color: 0x836522, roughness: 0.82, metalness: 0.04 }),
+      body: [null, null, null]
+    };
+    return BLK_MATS;
+  }
+
+  // 混凝土防爆块。原来是「一个 Box + 顶上一块比本体更大的亮黄板」，24 个一模一样。
+  // 现在按真实浇筑件分三段：**底座（满宽·暗） → 块身（收窄·带贴图） → 压顶（略窄·亮）**。
+  // 宽—窄—宽的侧影本身就读得出是个铸件，两道台阶各自能啃住一条高光。
+  // 三段高度加起来正好 b.h、水平方向都不超出 b.w/b.d —— 碰撞盒（BOXES）一点没动。
+  function buildConcreteBlock(b, i) {
+    var M = blockMats();
+    // 变体由**位置**决定而不是 Math.random：同一个块每次进游戏长得一样，
+    // 否则重连一次整片掩体的花纹全变，看着像在闪。
+    var v = Math.abs(Math.round(b.x * 3 + b.z * 7) + i) % 3;
+    if (!M.body[v]) {
+      M.body[v] = new THREE.MeshStandardMaterial({ map: getBlockTexture(v), roughness: 0.93, metalness: 0.03 });
+    }
+    var footH = Math.min(0.24, b.h * 0.10);
+    var capH = Math.min(0.18, b.h * 0.075);
+    var bodyH = b.h - footH - capH;
+    var inset = 0.15;                        // 块身相对底座每边收进 7.5cm
+
+    var foot = new THREE.Mesh(new THREE.BoxGeometry(b.w, footH, b.d), M.foot);
+    foot.position.set(b.x, footH / 2, b.z);
+    foot.castShadow = true; foot.receiveShadow = true; scene.add(foot);
+
+    var body = new THREE.Mesh(new THREE.BoxGeometry(b.w - inset, bodyH, b.d - inset), M.body[v]);
+    body.position.set(b.x, footH + bodyH / 2, b.z);
+    // 立方体块（w==d）可以整 90° 转：AABB 完全不变，但换了个面朝外，
+    // 24 个块的重复感就散开了。非立方体绝对不能转——90° 会把 w 和 d 调包，
+    // 视觉体积就和碰撞盒错开了。
+    if (Math.abs(b.w - b.d) < 1e-6) body.rotation.y = (i % 4) * Math.PI / 2;
+    body.castShadow = true; body.receiveShadow = true; scene.add(body);
+
+    var cap = new THREE.Mesh(new THREE.BoxGeometry(b.w - 0.04, capH, b.d - 0.04), M.cap);
+    cap.position.set(b.x, b.h - capH / 2, b.z);
+    cap.castShadow = true; cap.receiveShadow = true; scene.add(cap);
+
+    // 危险条只刷三分之一的块，而且刷在压顶的**侧面**。
+    // 原来是在 y = b.h + 0.03 摆一块比本体还宽的板，等于给每个块戴了顶发光帽子。
+    // 现在这条线在压顶内部，只凸出 5mm，是「漆」而不是「另一个物体」。
+    if (v === 0) {
+      var band = new THREE.Mesh(new THREE.BoxGeometry(b.w - 0.03, 0.055, b.d - 0.03), M.haz);
+      band.position.set(b.x, b.h - capH + 0.045, b.z);
+      scene.add(band);
+    }
   }
 
   // 铁丝网贴图
@@ -1086,17 +1429,50 @@ var smokeParticles = [];
     }, { repeat: [Math.max(1, Math.round(width / 4)), 1] });
   }
 
+  // 道具落点避让：把写死的 (x,z) 推到最近的掩体外面。
+  // 道具位置和 BOXES 都是手写常量，两张表各改各的，迟早会撞——实测就撞了 4 处：
+  // (-5,12) 和 (-3,12) 两个油桶整只埋在 (0,12) 那道 12m 长的沙袋墙里，
+  // 只剩 5cm 桶盖露在墙顶（截图 92 里集装箱式掩体顶上那个深色椭圆就是它）；
+  // (-18,-5) 的油桶埋在 (-18,0) 那道 4m 高的长墙里，整只看不见；
+  // (24,-3) 的轮胎堆和 (25,-5) 的木箱擦边。
+  // 与其手改坐标（下次动 BOXES 又要重撞一遍），不如落点时算一次：
+  // 沿「盒心 → 道具」方向推到盒子外缘 + r + 0.12 的间隙。用 Chebyshev 意义下
+  // 溢出最少的那个轴推，位移最小，构图基本不变。
+  function freeSpot(x, z, r) {
+    for (var pass = 0; pass < 3; pass++) {
+      var moved = false;
+      for (var i = 0; i < BOXES.length; i++) {
+        var b = BOXES[i];
+        var hx = b.w / 2 + r + 0.12, hz = b.d / 2 + r + 0.12;
+        var dx = x - b.x, dz = z - b.z;
+        if (Math.abs(dx) >= hx || Math.abs(dz) >= hz) continue;
+        // 推哪个轴：看哪个方向离出界更近
+        if (hx - Math.abs(dx) <= hz - Math.abs(dz)) x = b.x + (dx >= 0 ? hx : -hx);
+        else z = b.z + (dz >= 0 ? hz : -hz);
+        moved = true;
+      }
+      if (!moved) break;
+    }
+    return [x, z];
+  }
+
   // 场景道具：油桶、轮胎堆、木托盘、弹药箱、混凝土残块
+  // 油桶（红/蓝/黄，带箍与顶盖）
+  // metalness 0.55 → 0.20：油桶是**喷漆**的铁皮，漆是电介质，金属度就该接近 0。
+  // 给 0.55 的后果是漫反射被砍掉一半多，四种漆色全部压暗压脏，红桶蓝桶在
+  // 场地里读成两块深色斑（实测 lum 0.328 / 0.394，本该在 0.5 一带）。
+  // 只有磨掉漆的箍才配得上高金属度。
   function buildProps(metalTex) {
-    // 油桶（红/蓝/黄，带箍与顶盖）
     var drumColors = [0xb63a2f, 0x2f6f9a, 0xc7a53a, 0x3a7a4a];
-    [[-5, 12, 0], [5, -15, 1], [-18, -5, 2], [15, 5, 0], [-30, 12, 1], [30, -12, 3], [-12, 30, 0], [12, -30, 2], [-3, 12, 3], [22, 3, 1]].forEach(function (p) {
+    [[-5, 12, 0], [5, -15, 1], [-18, -5, 2], [15, 5, 0], [-30, 12, 1], [30, -12, 3], [-12, 30, 0], [12, -30, 2], [-3, 12, 3], [22, 3, 1]].forEach(function (p0) {
+      var fs = freeSpot(p0[0], p0[1], 0.47);
+      var p = [fs[0], fs[1], p0[2]];
       var col = drumColors[p[2]];
       var body = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.46, 1.15, 16),
-        new THREE.MeshStandardMaterial({ color: col, roughness: 0.45, metalness: 0.55 }));
+        new THREE.MeshStandardMaterial({ color: col, roughness: 0.52, metalness: 0.20 }));
       body.position.set(p[0], 0.58, p[1]);
       body.castShadow = true; body.receiveShadow = true; scene.add(body);
-      var ringMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.6, metalness: 0.5 });
+      var ringMat = new THREE.MeshStandardMaterial({ color: 0x2e2c29, roughness: 0.62, metalness: 0.25 });
       [-0.32, 0, 0.32].forEach(function (yy) {
         var ring = new THREE.Mesh(new THREE.TorusGeometry(0.47, 0.03, 6, 20), ringMat);
         ring.rotation.x = Math.PI / 2; ring.position.set(p[0], 0.58 + yy, p[1]); scene.add(ring);
@@ -1106,8 +1482,13 @@ var smokeParticles = [];
     });
 
     // 轮胎堆
-    var tireMat = new THREE.MeshStandardMaterial({ color: 0x18181a, roughness: 0.9, metalness: 0.05 });
-    [[-9, 9], [10, 10], [-20, 18], [24, -3]].forEach(function (p) {
+    // 轮胎堆。橡胶的金属度本来就该接近 0（这里 0.05 是对的），问题在 albedo：
+    // 0x18181a 实测亮度只有 0.09，俯视时十几堆轮胎全是一团黑饼，看不出是轮胎。
+    // 真实轮胎反射率确实只有 4~5%，但在 ACES 下暗部被压得更平，
+    // 抬到 0x2a2a2d 才既保住「场上最暗的东西」的地位，又读得出圆环的体积。
+    var tireMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2d, roughness: 0.9, metalness: 0.05 });
+    [[-9, 9], [10, 10], [-20, 18], [24, -3]].forEach(function (p0) {
+      var p = freeSpot(p0[0], p0[1], 0.77);   // 0.55 环半径 + 0.22 管半径
       for (var k = 0; k < 3; k++) {
         var tire = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.22, 10, 20), tireMat);
         tire.rotation.x = Math.PI / 2;
@@ -1119,7 +1500,9 @@ var smokeParticles = [];
 
     // 木托盘
     var palletMat = new THREE.MeshStandardMaterial({ map: getCrateTexture(), color: 0xb98a52, roughness: 0.85 });
-    [[-16, 22, 0.3], [17, 19, -0.6], [-24, -22, 1.2]].forEach(function (p) {
+    [[-16, 22, 0.3], [17, 19, -0.6], [-24, -22, 1.2]].forEach(function (p0) {
+      var fs = freeSpot(p0[0], p0[1], 1.0);   // 托盘 1.4×1.4，外接半径 ~1.0
+      var p = [fs[0], fs[1], p0[2]];
       var pallet = new THREE.Group();
       for (var s = 0; s < 4; s++) {
         var slat = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.08, 0.18), palletMat);
@@ -1135,7 +1518,8 @@ var smokeParticles = [];
 
     // 混凝土残块 / 路障
     var rubbleMat = new THREE.MeshStandardMaterial({ map: getConcreteTexture(), color: 0x9a9c98, roughness: 0.95 });
-    [[-2, -18], [3, 22], [-26, 2], [26, 14], [14, -24]].forEach(function (p) {
+    [[-2, -18], [3, 22], [-26, 2], [26, 14], [14, -24]].forEach(function (p0) {
+      var p = freeSpot(p0[0], p0[1], 0.8);
       var chunk = new THREE.Mesh(new THREE.DodecahedronGeometry(0.5 + Math.random() * 0.3), rubbleMat);
       chunk.position.set(p[0], 0.35, p[1]);
       chunk.rotation.set(Math.random(), Math.random(), Math.random());
@@ -1146,9 +1530,12 @@ var smokeParticles = [];
 
   // 瞭望塔：桁架腿 + 平台 + 栏杆 + 斜顶 + 探照灯
   function buildWatchtowers() {
-    var legMat = new THREE.MeshStandardMaterial({ color: 0x2b2b2e, roughness: 0.7, metalness: 0.4 });
-    var platMat = new THREE.MeshStandardMaterial({ map: getMetalTexture(), color: 0x555a5f, roughness: 0.6, metalness: 0.4 });
-    var roofMat = new THREE.MeshStandardMaterial({ color: 0x3a4652, roughness: 0.55, metalness: 0.35 });
+    // 瞭望塔三件套也是半金属：桁架腿是刷漆型钢、平台是花纹钢板、顶是涂装铁皮，
+    // 三者都该按「漆面电介质」给低金属度。塔在场地四角、逆光居多，
+    // 金属度 0.35~0.4 直接让它们变成四团剪影，塔身桁架的结构完全读不出来。
+    var legMat = new THREE.MeshStandardMaterial({ color: 0x3a3a3e, roughness: 0.72, metalness: 0.18 });
+    var platMat = new THREE.MeshStandardMaterial({ map: getMetalTexture(), color: 0x6a7076, roughness: 0.62, metalness: 0.22 });
+    var roofMat = new THREE.MeshStandardMaterial({ color: 0x54606c, roughness: 0.6, metalness: 0.18 });
     [[-52, -52], [52, -52], [-52, 52], [52, 52]].forEach(function (p) {
       var g = new THREE.Group();
       var H = 6.6;
@@ -1175,7 +1562,7 @@ var smokeParticles = [];
       roof.position.set(0, H + 1.9, 0); roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
       // 探照灯
       var lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.36, 0.4, 12),
-        new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.5, metalness: 0.6 }));
+        new THREE.MeshStandardMaterial({ color: 0x3a3a3d, roughness: 0.55, metalness: 0.2 }));
       lamp.rotation.z = Math.PI / 2; lamp.position.set(1.6, H + 0.8, 1.6); g.add(lamp);
       var lampGlow = new THREE.Mesh(new THREE.CircleGeometry(0.26, 16),
         new THREE.MeshStandardMaterial({ color: 0xfff2c0, emissive: 0xffdd88, emissiveIntensity: 1.4 }));
@@ -1190,8 +1577,12 @@ var smokeParticles = [];
 
   // 远景：树林 + 远山 + 停机坪外机库轮廓
   function buildScenery() {
-    // 树木（双层锥形 + 颜色抖动）
-    var trunkMat = new THREE.MeshStandardMaterial({ color: 0x5a3f26, roughness: 0.95 });
+    // 树木（三层锥形 + 颜色抖动）
+    // 原来叶色是 HSL(0.32~0.44, 0.45, 0.32)。色相 0.44 已经拐到青绿了，
+    // 加上 0.45 的饱和度和 2.45 强度的太阳，40 棵树在俯视图里是一圈发光的薄荷色锥子。
+    // 针叶林的实际色相在 0.22~0.31（黄绿到绿），饱和度低、明度更低；
+    // 把三个分量全部往下压，树才退回背景里，不再和场地抢注意力。
+    var trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3524, roughness: 0.95 });
     var treeSpots = [];
     for (var a = 0; a < 40; a++) {
       var ang = (a / 40) * Math.PI * 2;
@@ -1199,27 +1590,64 @@ var smokeParticles = [];
       treeSpots.push([Math.cos(ang) * rad, Math.sin(ang) * rad]);
     }
     treeSpots.forEach(function (p) {
-      var trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.34, 3.0, 6), trunkMat);
-      trunk.position.set(p[0], 1.5, p[1]); trunk.castShadow = true; scene.add(trunk);
-      var lh = 0.32 + Math.random() * 0.12;
-      var leafMat = new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(lh, 0.45, 0.32), roughness: 0.85 });
-      var l1 = new THREE.Mesh(new THREE.ConeGeometry(1.5 + Math.random() * 0.4, 3.2, 7), leafMat);
-      l1.position.set(p[0], 4.0, p[1]); l1.castShadow = true; scene.add(l1);
-      var l2 = new THREE.Mesh(new THREE.ConeGeometry(1.1, 2.4, 7), leafMat);
-      l2.position.set(p[0], 5.6, p[1]); l2.castShadow = true; scene.add(l2);
+      // 整棵树的尺度抖动。原来 40 棵一样高，一圈下来像栅栏；
+      // 高度差是远景里最容易读到的信息，比叶子形状重要得多。
+      var sc = 0.78 + Math.random() * 0.55;
+      var trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22 * sc, 0.34 * sc, 3.0 * sc, 6), trunkMat);
+      trunk.position.set(p[0], 1.5 * sc, p[1]); trunk.castShadow = true; scene.add(trunk);
+      var leafMat = new THREE.MeshStandardMaterial({
+        // 第四个参数 THREE.SRGBColorSpace 不能省。Color.setHSL 的默认色彩空间是
+        // **working space**（线性），不是 sRGB —— 也就是说 l=0.13 被当成线性亮度，
+        // 换算回 sRGB 是 0.40，比想要的亮了三倍。上一版已经把色相饱和度都压下来了，
+        // 树还是一圈发亮的薄荷色锥子，原因就在这里，不在 HSL 的取值上。
+        // （注意本文件还有两处 setHSL 也是默认色彩空间：人物 accent 和碎石，
+        //   那两处是按当时看到的效果调的，不在本次改动范围内。）
+        color: new THREE.Color().setHSL(0.22 + Math.random() * 0.09, 0.26 + Math.random() * 0.16, 0.14 + Math.random() * 0.06, THREE.SRGBColorSpace),
+        roughness: 0.9,
+        // 七棱锥不关插值就是个光滑的圆锥鼓包；关掉之后每个侧面各吃一档亮度，
+        // 远处才看得出是层叠的针叶而不是一个绿色水滴。
+        flatShading: true
+      });
+      // 三层而不是两层：最下一层最宽、往上收，侧影有个明显的收分，
+      // 单靠两层锥体上下一样宽，看着就是两个叠起来的甜筒。
+      [[1.55, 3.0, 3.9], [1.20, 2.5, 5.3], [0.78, 1.9, 6.5]].forEach(function (t, ti) {
+        var cone = new THREE.Mesh(
+          new THREE.ConeGeometry((t[0] + (ti === 0 ? Math.random() * 0.35 : 0)) * sc, t[1] * sc, 7), leafMat);
+        cone.position.set(p[0], t[2] * sc, p[1]);
+        cone.rotation.y = Math.random() * Math.PI;
+        cone.castShadow = true; scene.add(cone);
+      });
     });
 
     // 远山（雾中低多边形，纯背景）
-    var hillMat = new THREE.MeshStandardMaterial({ color: 0x6f8298, roughness: 1, metalness: 0, fog: true });
-    for (var i = 0; i < 22; i++) {
-      var ang2 = (i / 22) * Math.PI * 2 + 0.3;
-      var d = 200 + Math.random() * 70;
-      var hgt = 20 + Math.random() * 40;
-      var hill = new THREE.Mesh(new THREE.ConeGeometry(40 + Math.random() * 40, hgt, 5), hillMat);
-      hill.position.set(Math.cos(ang2) * d, hgt / 2 - 6, Math.sin(ang2) * d);
-      hill.rotation.y = Math.random() * Math.PI;
-      scene.add(hill);
-    }
+    // 原来是 22 个同一材质的锥体撒在 d=200~270 的一圈上，实测渲染亮度 0.739 ——
+    // 比天空（0.466）还亮，而且和地平线雾色（#bdd2e2 过 ACES 后约 0.74）完全一样，
+    // 所以它们既压不住天际线、又只剩一圈硬边的浅色三角形，读不出是山。
+    // 两处改动：
+    //   1) 分**三层**，近的一层压得最暗。雾的 near 80 / far 340 会自动把远层洗白，
+    //      于是「近暗远淡」的空气透视是雾帮着做出来的，不用手调每座山。
+    //   2) flatShading —— 五棱锥的侧面本来法线是插值的，看着是个圆滑鼓包；
+    //      关掉插值之后每个面各自吃一个亮度，山脊线才出来。
+    var hillBands = [
+      { d: [150, 40], h: [26, 30], col: 0x39424e, n: 9 },   // 近：最暗，负责压住天际线
+      { d: [215, 55], h: [34, 40], col: 0x47535f, n: 9 },
+      { d: [285, 60], h: [46, 46], col: 0x57646f, n: 8 }    // 远：本身就被雾洗掉大半
+    ];
+    hillBands.forEach(function (band, bi) {
+      var mat = new THREE.MeshStandardMaterial({
+        color: band.col, roughness: 1, metalness: 0, fog: true, flatShading: true
+      });
+      for (var i = 0; i < band.n; i++) {
+        // 每层错开相位，三层的山峰才不会在同一根方位角上叠成一个尖
+        var ang2 = ((i + bi * 0.37) / band.n) * Math.PI * 2 + 0.3;
+        var d = band.d[0] + Math.random() * band.d[1];
+        var hgt = band.h[0] + Math.random() * band.h[1];
+        var hill = new THREE.Mesh(new THREE.ConeGeometry(46 + Math.random() * 46, hgt, 5), mat);
+        hill.position.set(Math.cos(ang2) * d, hgt / 2 - 8, Math.sin(ang2) * d);
+        hill.rotation.y = Math.random() * Math.PI;
+        scene.add(hill);
+      }
+    });
 
     // 场外机库（矩形轮廓，营造纵深）
     var hangarMat = new THREE.MeshStandardMaterial({ color: 0x4a5560, roughness: 0.8, metalness: 0.2 });
@@ -2534,6 +2962,9 @@ var smokeParticles = [];
       ['#4a4550', '#666070', '#332f3a', '#242028']
     ];
     var pal = palettes[bucket % palettes.length];
+    // repeat 留在 [1,1]：迷彩的世界尺寸不在这里定，而是由 fixLatheCamoUV
+    // 把 uv 直接写成「米 / CAMO_TILE」。用 repeat 调的话对每个部位都是同一个倍数，
+    // 而各部位的胶囊尺寸差好几倍，必然对谁都不准。
     return makeTex('camo_' + bucket, 256, function (ctx, w, h) {
       ctx.fillStyle = pal[0]; ctx.fillRect(0, 0, w, h);
       function blob(color, count, size) {
@@ -2555,7 +2986,59 @@ var smokeParticles = [];
       blob(pal[2], 20, 24);
       blob(pal[3], 26, 16);
       speckle(ctx, w, h, 500, 0.03, 0.1, 2, function (a) { return 'rgba(0,0,0,' + a + ')'; });
-    }, { repeat: [2, 2] });
+    }, { repeat: [1, 1] });
+  }
+
+  // 迷彩斑的目标世界尺寸（米）：一个贴图 tile 的边长。
+  // 真实多地形迷彩的斑块约 10~20cm。取 0.115 试过，近距离偏碎、像撒了一层confetti
+  // （贴图里最小那层斑只有 16/256 → 0.7cm），抬到 0.15 之后大腿周向 4 个 tile、
+  // 单斑 14.3cm，近看成块、远看糊成一个色调，两头都对。
+  var CAMO_TILE = 0.15;
+
+  // three.js 的 CapsuleGeometry 继承 LatheGeometry，v 坐标按**轮廓点序号**均分：
+  //     uv.y = j / (points.length - 1)
+  // 而胶囊的轮廓里，两个球冠各占 capSegments*2 段，圆柱侧面只占 **1 段**
+  // （Path.absellipse 在两段圆弧之间补的那条 LineCurve，getPoints 只给它 1 段）。
+  // 实测 CapsuleGeometry(0.091, 0.34, 6, 14)：26 个轮廓点，侧面那一段覆盖
+  // 整整 0.34m 的高度却只分到 dv=0.04，周向却占满 u=1.0（周长 0.572m）——
+  // 沿长度方向被拉伸 **14.87 倍**。这才是腿上那些竖条的真正来源。
+  // 注意它和多边形段数无关：radialSegments 从 8 提到 14 之后画面一模一样，
+  // 而且按「v 沿高均匀」估出来的长宽比是 0.91，看着完全正常——所以这个 bug
+  // 靠算长宽比是发现不了的，必须去读 uv 属性本身。
+  //
+  // 这里按**轮廓弧长**重算 v、按周长重算 u，两个方向的单位都换成「米 / CAMO_TILE」。
+  // 好处不只是消掉拉伸：各部位的迷彩尺寸自动统一（躯干和小臂的斑一样大），
+  // 不再需要靠 map.repeat 去手调一个对谁都不准的折中值。
+  function fixLatheCamoUV(geo, radialSeg, kx, ky) {
+    var pos = geo.attributes.position, uv = geo.attributes.uv;
+    var pc = pos.count / (radialSeg + 1);       // 每环的轮廓点数
+    if (pc !== Math.floor(pc)) return geo;      // 不是预期的 lathe 排布，不动它
+    var s = new Float32Array(pc), maxR = 0, prevR = 0, prevY = 0, acc = 0, j, i;
+    for (j = 0; j < pc; j++) {
+      // kx/ky 是这块网格自身的非等比缩放（躯干被压成 0.94/1/0.66）。
+      // 弧长要在**缩放后**的尺度上算，否则扁躯干上的斑还是会横向压扁。
+      var r = Math.hypot(pos.getX(j), pos.getZ(j)) * kx;
+      var y = pos.getY(j) * ky;
+      if (j > 0) acc += Math.hypot(r - prevR, y - prevY);
+      s[j] = acc; prevR = r; prevY = y;
+      if (r > maxR) maxR = r;
+    }
+    // 周向必须取**整数个 tile**：i=0 和 i=radialSeg 是同一条棱，
+    // u 不落在整数上的话背面会留一条对不齐的竖缝。
+    var uTiles = Math.max(1, Math.round(2 * Math.PI * maxR / CAMO_TILE));
+    for (i = 0; i <= radialSeg; i++) {
+      for (j = 0; j < pc; j++) {
+        uv.setXY(i * pc + j, (i / radialSeg) * uTiles, s[j] / CAMO_TILE);
+      }
+    }
+    uv.needsUpdate = true;
+    return geo;
+  }
+  function camoCapsule(radius, length, capSeg, radialSeg, kx, ky) {
+    return fixLatheCamoUV(
+      new THREE.CapsuleGeometry(radius, length, capSeg, radialSeg),
+      radialSeg, kx || 1, ky || 1
+    );
   }
 
   function createRemotePlayer(id, name) {
@@ -2578,8 +3061,17 @@ var smokeParticles = [];
     var pouchMat = new THREE.MeshStandardMaterial({ color: 0x6a5f45, roughness: 0.88, metalness: 0.04, transparent: true, opacity: 1 });
     var skinMat = new THREE.MeshStandardMaterial({ color: 0xd9a878, roughness: 0.85, transparent: true, opacity: 1 });
     var maskMat = new THREE.MeshStandardMaterial({ color: 0x1a1c20, roughness: 0.7, transparent: true, opacity: 1 });
+    // 头套/颈套。原来整个头就是一块 skinMat 倒角盒，护目镜之外全是没有五官的肉色平面——
+    // 低多边形做人脸只会像块橡皮泥，而真实特勤装具本来就是全覆盖头套，索性顺着做。
+    // 明度必须卡在头盔和镜体之间（头盔 0x3c4142 亮 > 头套 0x282c31 > 镜体 0x121316 暗），
+    // 三件叠在一起才有层次；做得和镜体一样黑，整个头会糊成一团看不出形状。
+    var hoodMat = new THREE.MeshStandardMaterial({ color: 0x282c31, roughness: 0.88, metalness: 0.02, transparent: true, opacity: 1 });
     var gogMat = new THREE.MeshStandardMaterial({ color: 0x121316, roughness: 0.25, metalness: 0.5, transparent: true, opacity: 1 });
-    var lensMat = new THREE.MeshStandardMaterial({ color: 0x88e0ff, emissive: 0x2a6688, emissiveIntensity: 0.6, roughness: 0.2, metalness: 0.4, transparent: true, opacity: 1 });
+    // 镜片。metalness 0.4 + roughness 0.2 时正面几乎全黑，只有左右两端擦到天光才亮——
+    // 结果不像一整片风镜，而像太阳穴上贴了两个发光小方块。
+    // 金属度压到 0.12、粗糙度抬到 0.34，镜面高光摊开，整片才有一致的色调；
+    // 颜色也从 0x88e0ff 收深一档，否则在 ACES 下是一条霓虹灯管。
+    var lensMat = new THREE.MeshStandardMaterial({ color: 0x6fbcd8, emissive: 0x2a6688, emissiveIntensity: 0.45, roughness: 0.34, metalness: 0.12, transparent: true, opacity: 1 });
     var helmetMat = new THREE.MeshStandardMaterial({ color: 0x3c4142, roughness: 0.55, metalness: 0.25, transparent: true, opacity: 1 });
     var bootMat = new THREE.MeshStandardMaterial({ color: 0x1b1a18, roughness: 0.6, transparent: true, opacity: 1 });
     var accentMat = new THREE.MeshStandardMaterial({ color: accent, emissive: accent.clone().multiplyScalar(0.25), roughness: 0.5, transparent: true, opacity: 1 });
@@ -2588,7 +3080,7 @@ var smokeParticles = [];
     // 真实护具是橡胶/尼龙包边的哑光件，压到 0.16 / 0.62 才像。
     // 明度仍然排在 gearMat 和 vestMat 中间（偏冷），三档层次不能塌成一块。
     var armorMat = new THREE.MeshStandardMaterial({ color: 0x34383c, roughness: 0.62, metalness: 0.16, transparent: true, opacity: 1 });
-    var bodyMats = [suitMat, gearMat, vestMat, pouchMat, skinMat, maskMat, helmetMat, bootMat, accentMat, armorMat, gogMat];
+    var bodyMats = [suitMat, gearMat, vestMat, pouchMat, skinMat, maskMat, hoodMat, helmetMat, bootMat, accentMat, armorMat, gogMat];
 
     // 硬边盒在任何光照下都只有一片死板的平光，倒角边能抓到一条高光。
     // 人物身上小件最多，所以装具全部走倒角盒（几何体按尺寸缓存，多个玩家共用）。
@@ -2644,9 +3136,13 @@ var smokeParticles = [];
       // 站姿略微分开：原来 ±0.11 配 0.1 的大腿半径，两条大腿在 x=0.01 处几乎贴住，
       // 正面看下半身是一整块。
       leg.position.set(side * 0.118, 0.9, 0);
-      var thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.091, 0.34, 4, 8), suitMat);
+      // 段数 8→14 / 冠 4→6 纯粹是修轮廓：8 段的胶囊在几何上就是个八棱柱，
+      // 侧影能看出直边。**它跟迷彩竖条无关**——提到 14 之后画面一模一样，
+      // 竖条是 CapsuleGeometry 的 UV 坏的，由 camoCapsule 修（见 fixLatheCamoUV）。
+      // 整具人物为此只多约 2000 面。
+      var thigh = new THREE.Mesh(camoCapsule(0.091, 0.34, 6, 14), suitMat);
       thigh.position.y = -0.24; thigh.castShadow = true; leg.add(thigh);
-      var shin = new THREE.Mesh(new THREE.CapsuleGeometry(0.079, 0.34, 4, 8), suitMat);
+      var shin = new THREE.Mesh(camoCapsule(0.079, 0.34, 6, 14), suitMat);
       shin.position.y = -0.62; shin.castShadow = true; leg.add(shin);
       // 护膝比小腿略宽（0.172 > 0.158），凸出轮廓才看得见"戴了护膝"
       var knee = P(0.172, 0.13, 0.15, armorMat, 0, -0.44, -0.055); leg.add(knee);
@@ -2673,7 +3169,10 @@ var smokeParticles = [];
     // 从正面看只有两个圆截面从胸口顶出来——这就是最明显的一处穿模。
     // 前后也一样：背心 0.33 厚 + 背包 0.20 摆在 z=0.245，整个人 0.55m 厚，
     // 侧视就是个带腿的冰箱。真人胸厚约 0.24、连背包约 0.45。
-    var torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 0.36, 5, 10), suitMat);
+    // 躯干是压扁的（0.94/1/0.66），弧长得按压扁后的尺度算，
+    // 所以把横向缩放（0.94 和 0.66 的均值 0.80）传给 camoCapsule——
+    // 否则胸前的迷彩斑会跟着网格一起被横向挤窄三分之一。
+    var torso = new THREE.Mesh(camoCapsule(0.2, 0.36, 7, 18, 0.80, 1), suitMat);
     torso.scale.set(0.94, 1, 0.66); torso.position.y = 1.28; torso.castShadow = true;
     chest.add(torso);
     chest.add(P(0.345, 0.48, 0.26, vestMat, 0, 1.28, -0.01));
@@ -2748,10 +3247,17 @@ var smokeParticles = [];
     // ---- 头部（含头盔/护目镜/面罩/耳机）----
     var headGroup = new THREE.Group();
     headGroup.position.set(0, 1.56, 0);
-    var neck = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.08, 8), skinMat);
+    // 颈套而不是裸脖子。段数 8→14：0.06 半径的八棱柱在领口那一小截也看得出棱。
+    var neck = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.08, 14), hoodMat);
     neck.position.y = 0.02; headGroup.add(neck);
-    var head = P(0.17, 0.20, 0.18, skinMat, 0, 0.14, 0);
+    var head = P(0.17, 0.20, 0.18, hoodMat, 0, 0.14, 0);
     headGroup.add(head);
+    // 眼部露出的一条皮肤。全黑头套会让「头」退化成一个纯色块，看不出里面是个人；
+    // 留一条 3cm 的皮肤带，眼窝位置就有了参照，头的朝向也一眼能看出来。
+    // z 定在 -0.0965（比面罩前脸 -0.0975 退后 1mm）：皮肤是**凹**进装具里的，
+    // 顶出来就变成一条贴在脸上的肉色胶布。护目镜（y 0.123~0.181）压在它上沿，
+    // 面罩上沿抬到 0.0975 托住它下沿，中间正好留出这 25.5mm。
+    headGroup.add(PF(0.152, 0.030, 0.007, skinMat, 0, 0.110, -0.0930));
     // 头盔（球冠 + 帽檐 + 侧轨 + 后配重袋）
     var helmet = new THREE.Mesh(new THREE.SphereGeometry(0.135, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.62), helmetMat);
     helmet.position.set(0, 0.17, 0); helmet.scale.set(1.05, 1.06, 1.12); helmet.castShadow = true; headGroup.add(helmet);
@@ -2762,14 +3268,19 @@ var smokeParticles = [];
     headGroup.add(P(0.16, 0.075, 0.07, gearMat, 0, 0.145, 0.135));
     // 护目镜 + 绕头盔一整圈的镜带
     headGroup.add(P(0.195, 0.058, 0.045, gogMat, 0, 0.152, -0.092));
-    headGroup.add(PF(0.17, 0.038, 0.02, lensMat, 0, 0.152, -0.114));
+    // 镜片加宽到 0.183（原 0.17）：镜体是 0.195 宽，留 6mm 一圈镜框刚好，
+    // 原来两侧各露 12.5mm 的黑镜体，把镜片切成了「中间黑、两头亮」。
+    headGroup.add(PF(0.183, 0.040, 0.02, lensMat, 0, 0.152, -0.114));
     var gogStrap = new THREE.Mesh(new THREE.TorusGeometry(0.145, 0.009, 6, 20), gogMat);
     gogStrap.rotation.x = Math.PI / 2; gogStrap.position.set(0, 0.168, 0.005);
     gogStrap.scale.set(1, 1.06, 1); headGroup.add(gogStrap);
-    // 面罩（下半脸）+ 滤盒
-    headGroup.add(P(0.16, 0.095, 0.165, maskMat, 0, 0.058, -0.015));
-    headGroup.add(P(0.10, 0.062, 0.05, maskMat, 0, 0.052, -0.105));
-    headGroup.add(P(0.045, 0.035, 0.03, gearMat, 0, 0.040, -0.128));
+    // 面罩（下半脸）+ 滤盒。整组比原来低 8mm：上沿从 0.1055 退到 0.0975，
+    // 和护目镜下沿（0.123）之间的皮肤带就从 17.5mm 开到 25.5mm——
+    // 17mm 那条太细，远看就是一道线，读不出是眼睛。三块必须一起挪，
+    // 只挪主罩会让滤盒吊在罩子外面。
+    headGroup.add(P(0.16, 0.095, 0.165, maskMat, 0, 0.050, -0.015));
+    headGroup.add(P(0.10, 0.062, 0.05, maskMat, 0, 0.044, -0.105));
+    headGroup.add(P(0.045, 0.035, 0.03, gearMat, 0, 0.032, -0.128));
     // 耳机 + 头梁 + 送话器
     var earL = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.048, 0.05, 12), gearMat);
     earL.rotation.z = Math.PI / 2; earL.position.set(-0.135, 0.12, 0);
@@ -2797,7 +3308,7 @@ var smokeParticles = [];
       // 粗细也是量过的：上臂半径 0.073 时内缘落在 0.172，正好压在背心外缘
       // (0.1725+倒角) 上，肩一动就互相穿；收到 0.066 内缘 0.179，贴着但不穿，
       // 而且 0.146 的上臂直径本来就比真人（约 0.12）粗一圈。
-      var upper = new THREE.Mesh(new THREE.CapsuleGeometry(0.066, 0.235, 4, 8), suitMat);
+      var upper = new THREE.Mesh(camoCapsule(0.066, 0.235, 6, 14), suitMat);
       upper.position.set(0, -0.157, -0.015); upper.castShadow = true; arm.add(upper);
 
       var fore = new THREE.Group();            // 肘关节
@@ -2805,10 +3316,10 @@ var smokeParticles = [];
       arm.add(fore);
       // 护肘比小臂略宽，凸出轮廓
       fore.add(P(0.126, 0.098, 0.125, armorMat, 0, 0, 0));
-      var foreMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.056, 0.19, 4, 8), suitMat);
+      var foreMesh = new THREE.Mesh(camoCapsule(0.056, 0.19, 6, 14), suitMat);
       foreMesh.position.set(0, -0.135, 0); foreMesh.castShadow = true; fore.add(foreMesh);
       // 袖口束带（绕整圈）收住小臂末端
-      var cuff = new THREE.Mesh(new THREE.TorusGeometry(0.057, 0.010, 6, 14), gearMat);
+      var cuff = new THREE.Mesh(new THREE.TorusGeometry(0.057, 0.010, 6, 18), gearMat);
       cuff.rotation.x = Math.PI / 2; cuff.position.set(0, -0.255, 0); fore.add(cuff);
       // 手。之前小臂是直接截断的，正面看就是胸口上浮着一块圆形迷彩饼。
       // makeGlovedHand 的手腕朝局部 +z、指尖朝 -z，所以要绕 x 转 -90° 才能
@@ -3075,14 +3586,16 @@ var smokeParticles = [];
       .normalize();
   }
 
-  // 当前这一发的散射半角。与服务端 effectiveSpread 保持一致：
-  // 移动惩罚不受开镜缩放影响——边跑边开镜不该有站定的精度。
+  // 当前这一发的散射半角。必须与服务端 effectiveSpread 逐字一致。
+  // 腰射/移动/离地三个惩罚都是加法项，且都不受开镜缩放影响。
   function currentSpread(wpn) {
-    var base = (wpn.spread + bloom) * ((ads && local.current !== 'melee') ? (wpn.adsSpread || 1) : 1);
+    var aiming = ads && local.current !== 'melee';
+    var base = (wpn.spread + bloom) * (aiming ? (wpn.adsSpread || 1) : 1);
+    var hip = aiming ? 0 : (wpn.hipSpread || 0);
     var speed = Math.sqrt(local.vel.x * local.vel.x + local.vel.z * local.vel.z);
     var moveFrac = clamp(speed / 8, 0, 1);
     var air = (local.pos.y > 0.35 ? (wpn.airSpread || 0) : 0);
-    return base + moveFrac * (wpn.moveSpread || 0) + air;
+    return base + hip + moveFrac * (wpn.moveSpread || 0) + air;
   }
 
   function rayAABB(o, d, min, max) {
@@ -3234,8 +3747,16 @@ var smokeParticles = [];
     playNoise(0.16, far ? 500 : 700, far ? 0.2 : 0.5, 'lowpass');
   }
 
-  function playHitSound() {
+  // 爆头另给一声：高一个八度 + 紧跟一声更高的短音。
+  // 只改音量或时长是听不出来的（命中音本来就只有 50ms），
+  // 加第二个音头才能在连发的枪声里被分辨出来。
+  function playHitSound(head) {
     ensureAudio();
+    if (head) {
+      playTone(2100, 0.05, 0.4, 'square');
+      setTimeout(function () { playTone(2800, 0.045, 0.3, 'square'); }, 45);
+      return;
+    }
     playTone(1400, 0.05, 0.35, 'square');
   }
 
@@ -3804,10 +4325,28 @@ var smokeParticles = [];
       }
     }
 
-  function showHitmarker() {
+  // zone 为 'head' 时换一套配色（CSS 里的 .headshot），让爆头一眼可辨。
+  // 每次都要先摘掉 class 再强制读一次 offsetWidth：不这样做，连续两次命中
+  // 第二次不会重播动画（class 没变过，浏览器认为没有状态变化）。
+  function showHitmarker(zone) {
     hitmarker.classList.remove('show');
+    hitmarker.classList.toggle('headshot', zone === 'head');
     void hitmarker.offsetWidth;
     hitmarker.classList.add('show');
+  }
+
+  // 从一次开火的所有弹道里挑出「最值得反馈」的部位。
+  // 霰弹枪一次 8 颗，可能同时打中头和腿，这时候该报头。
+  function bestHitZone(tracers) {
+    if (!tracers) return null;
+    var rank = { head: 4, torso: 3, leg: 2, arm: 1 };
+    var best = null;
+    for (var i = 0; i < tracers.length; i++) {
+      var z = tracers[i].hitZone;
+      if (!z) continue;
+      if (best === null || (rank[z] || 0) > (rank[best] || 0)) best = z;
+    }
+    return best;
   }
 
   function showDamageFlash() {
@@ -3833,6 +4372,14 @@ var smokeParticles = [];
     div.appendChild(document.createTextNode(' 击杀了 '));
     div.appendChild(victim);
     div.appendChild(weapon);
+    // 命中部位。服务端只在枪械击杀时带 zone（近战/手雷没有命中点，见 server.js 的说明），
+    // 所以这里 msg.zone 为空是正常情况，不是缺字段。
+    if (msg.zoneLabel) {
+      var zoneEl = document.createElement('span');
+      zoneEl.className = 'zone' + (msg.zone === 'head' ? ' head' : '');
+      zoneEl.textContent = msg.zone === 'head' ? '爆头' : msg.zoneLabel;
+      div.appendChild(zoneEl);
+    }
     killfeed.appendChild(div);
     while (killfeed.children.length > 5) killfeed.removeChild(killfeed.firstChild);
     setTimeout(function () {
@@ -4096,8 +4643,9 @@ var smokeParticles = [];
     var isLocal = msg.id === local.id;
     if (isLocal) {
       if (msg.hitPlayers && msg.hitPlayers.length > 0) {
-        showHitmarker();
-        playHitSound();
+        var zone = bestHitZone(msg.tracers);
+        showHitmarker(zone);
+        playHitSound(zone === 'head');
       }
       return;
     }
@@ -4111,7 +4659,9 @@ var smokeParticles = [];
           0.06
         );
         if (tr.hitPlayer) {
-          addImpact(new THREE.Vector3(tr.end.x, tr.end.y, tr.end.z), 0xff6655, 10, false);
+          // 爆头的血雾更亮更多：旁观者也该看得出刚才那一枪打的是头
+          var head = tr.hitZone === 'head';
+          addImpact(new THREE.Vector3(tr.end.x, tr.end.y, tr.end.z), head ? 0xff2222 : 0xff6655, head ? 18 : 10, false);
         } else {
           addImpact(new THREE.Vector3(tr.end.x, tr.end.y, tr.end.z), 0xffd27a, 6, false);
         }
@@ -4401,17 +4951,28 @@ var smokeParticles = [];
       if (local.current === 'secondary') { local.ammoSecondary = local.ammo; } else { local.ammoPrimary = local.ammo; }
     updateHUD();
 
-    // 这一发的散射要在累加本发 bloom **之前**算，否则第一发就自带累积量
+    // 这一发的散射要在累加本发 bloom **之前**算，否则第一发就自带累积量。
+    // burstFrac 也必须在累加前取：它代表「这一发之前已经连打了多少」。
     var spread = currentSpread(wpn);
+    var burstFrac = clamp(bloom / (wpn.bloomMax || 1), 0, 1);
     bloom = Math.min(bloom + (wpn.bloom || 0), wpn.bloomMax || 0);
 
     // 后坐力：抬枪 + 横向抖动。开镜时减轻 35%（贴腮更稳）。
     // recoilPitch/recoilYaw 同时进入画面和 aimDir()，所以它真的会打偏。
+    //
+    // 连发增长：抬枪量 = recoil × (1 + recoilRamp × burstFrac)。
+    // 直接复用 bloom/bloomMax 当「连了多久」的度量，不再单开一个计数器——
+    // 两者本来就是同一件事（连发累积），而且 bloom 已经有了正确的衰减、
+    // 换枪清零、换弹清零逻辑，再开一个状态必然有一天忘了同步其中一处。
+    // 效果：步枪 ramp 1.30，压满时抬枪是首发的 2.3 倍；机枪 1.70 → 2.7 倍。
+    // 横向抖动额外再乘一次 (1 + 0.8×burstFrac)：真实全自动是先竖着爬、
+    // 后半段开始左右画龙，只放大纵向的话弹道会是一条笔直的竖线，太好压了。
     var adsK = (ads && local.current !== 'melee') ? 0.65 : 1;
-    var kick = (wpn.recoil || 0.015) * adsK;
+    var ramp = 1 + (wpn.recoilRamp || 0) * burstFrac;
+    var kick = (wpn.recoil || 0.015) * adsK * ramp;
     recoilPitch += kick * (0.78 + Math.random() * 0.44);
-    recoilYaw += (Math.random() - 0.5) * 2 * (wpn.recoilH || 0.004) * adsK;
-    recoilZ += wpn.id === 'awp' ? 0.16 : (wpn.id === 'shotgun' ? 0.1 : 0.05);
+    recoilYaw += (Math.random() - 0.5) * 2 * (wpn.recoilH || 0.004) * adsK * ramp * (1 + 0.8 * burstFrac);
+    recoilZ += (wpn.id === 'awp' ? 0.16 : (wpn.id === 'shotgun' ? 0.1 : 0.05)) * (1 + 0.5 * burstFrac);
 
     // 枪口火焰
     var ray = castLocalRay(wpn.range);
@@ -4592,16 +5153,33 @@ var smokeParticles = [];
       vmGroup.visible = true;
     }
 
-    // 后坐力恢复。开镜时恢复更快（更贴稳），让点射节奏有区别。
-    var rec = 1 - Math.exp(-dt * (adsActive ? 15 : 11));
+    // 后坐力恢复。
+    //
+    // 原来这里是固定 11/s（开镜 15/s），而恢复是**每帧**做的，于是恢复速度
+    // 相对射速快得离谱：步枪两发间隔 105ms，1-exp(-0.105×11)=0.685，也就是
+    // 每发之间要抹掉 68.5% 的已抬枪量。稳态抬枪 = kick/0.685 ≈ 1.46 发的量，
+    // 模拟一梭子 30 发，画面只往上爬 0.75° 然后就停在那了 —— 全自动压枪
+    // 这件事根本不存在，连打和点射的弹道一模一样。
+    //
+    // 改成分两档：扣着扳机（距上次开火 < 1.75 个射击间隔）时恢复只有 2.5/s，
+    // 松开后恢复回 11/s。这才是真枪的行为——连发时枪口持续上爬，
+    // 靠停火（或者手动下压）才回正。
+    // 稳态抬枪 = kick_max / (1-exp(-dt×2.5))：
+    //   步枪 0.009×2.3 / 0.230 = 0.090rad ≈ 5.2°，约 15 发爬到位；
+    //   机枪 0.0062×2.7 / 0.211 = 0.079rad ≈ 4.5°。
+    // 是「爬到一个平台」而不是无上限地飞出画面：平台高度可学、可预判、可压，
+    // 完全抑制恢复的话一梭子能爬 30° 以上，那不是难度是失控。
+    var curWpn = (local.current !== 'melee') ? WEAPONS[local.ranged] : null;
+    var stillFiring = !!curWpn && (performance.now() - lastLocalFire) < curWpn.cooldown * 1.75;
+    var recRate = stillFiring ? (adsActive ? 3.5 : 2.5) : (adsActive ? 15 : 11);
+    var rec = 1 - Math.exp(-dt * recRate);
     recoilPitch -= recoilPitch * rec;
     recoilYaw -= recoilYaw * rec;
     recoilZ -= recoilZ * (1 - Math.exp(-dt * 12));
 
     // 累积散射回落（与服务端 decayBloom 用同一组 bloomDecay）
-    if (bloom > 0 && local.current !== 'melee') {
-      var rw = WEAPONS[local.ranged];
-      bloom = Math.max(0, bloom - dt * ((rw && rw.bloomDecay) || 0.05));
+    if (bloom > 0 && curWpn) {
+      bloom = Math.max(0, bloom - dt * (curWpn.bloomDecay || 0.05));
     }
 
     // 近战挥砍动画。和第三人称共用一张弧线表（MELEE_ARC），只是第一人称
@@ -5131,5 +5709,13 @@ var smokeParticles = [];
   bindMenu();
   updateHUD();
   animate();
+
+  // ---- 临时视觉检查钩子（打磨完就删）----
+  window.__DBG = {
+    THREE: THREE, scene: scene, camera: camera, renderer: renderer,
+    buildGunModel: buildGunModel, buildMeleeModel: buildMeleeModel,
+    createRemotePlayer: createRemotePlayer, buildEnvironment: buildEnvironment,
+    WEAPONS: WEAPONS
+  };
 
 })();
