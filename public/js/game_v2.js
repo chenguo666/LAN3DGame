@@ -109,11 +109,112 @@
   // y 从 -0.106 抬到 -0.02：肩点在 1.435，原来托底落在 1.33，等于夹在腋下而不是
   // 肩窝里；抬起来之后托底刚好蹭到护肩前下沿，瞄具也从胸口抬到下巴高度。
   var WEAPON_MOUNT = [0.215, -0.02, -0.375];
-  // 枪托末端在 weaponGroup 里应该落到的深度。各枪长短差得很多——托底在自身局部
-  // 从手枪的 0.068 一直到 AWP 的 0.447，而挂点只有一个，照一个数摆必然一头顾不上：
-  // 实测 AWP 静止就把托扎进护肩 38.8mm，霰弹枪 26.4mm。所以按**托底**对齐，
-  // 让每把枪的托都停在同一个肩窝深度上（见 ensureRemoteWeapon）。
-  var TP_POCKET_Z = 0.300;
+  // 这里曾经按「托底对齐」给每把枪单独往前错一段（TP_POCKET_Z），为的是把长枪的
+  // 托从护肩里拔出来。后来用精确椭球（而不是外接盒）重测才发现两件事：
+  // 一是外接盒把圆角处的深度虚报了——霰弹枪所谓的 26.4mm 其实是 0；
+  // 二是错位的代价全压在**支撑手**上：枪往前错 147mm，护木就跑出左臂可达范围，
+  // 静止时 AWP 的左手被迫退到弹匣井（suppFrac 0.38），长枪双手并在一起。
+  // 两害相权：托陷进护肩是「顶肩」本来的样子，而支撑手离开护木是随时都看得见的
+  // 错误。所以不再错位，只把护肩收薄（见 shoulderL）来减少重叠。
+
+  // ---------------- 近战：握持点 / 挂点 / 连段 / 挥砍弧线 ----------------
+  // 握把点直接引用第一人称 addHands 摆手的那组坐标（同一套模型局部坐标系），
+  // 用时乘 MELEE_TP_SCALE 折算到身体尺度。l 为 null = 单手武器，左手不参与握持。
+  // 这一步是必须的：以前近战沿用 GRIP_LOCAL/SUPP_LOCAL（步枪的握把 + 护木），
+  // 那两个点相距 310mm，套到一把 135mm 长的匕首上就是「双手各握一头空气」。
+  var MELEE_GRIP = {
+    knife:    { r: [0, 0, 0.085],      l: null },
+    kukri:    { r: [0, 0, 0.082],      l: null },
+    axe:      { r: [0, -0.01, 0.215],  l: [0, -0.01, 0.045] },
+    katana:   { r: [0, 0, 0.075],      l: [0, 0, 0.195] },
+    chainsaw: { r: [0, -0.038, 0.195], l: [0, 0.135, -0.02] }
+  };
+  // 近战挂点不能用 WEAPON_MOUNT——那是「枪托顶肩」的位置，刀顶在肩上没道理。
+  // 刀端在胸前偏右、比枪低一档、离身体远一点，右手才有地方握。
+  // z 定在 -0.40：挥砍时扎进躯干最深的点**不是刀尖，是柄尾**（实测太刀最深点在
+  // 模型局部 z=+0.278 = 刀柄末端、斧头在 z=+0.349 = 柄尾），柄尾在手后面 20cm，
+  // 挂点越靠身体柄尾越往肚子里转。-0.33 时太刀第二段实测扎进躯干 64.4mm，
+  // 挪到 -0.40 只剩 4.0mm（低于模型自身圆角误差）。再往前会让待机姿势变成
+  // 直臂：-0.44 时静止臂展 0.532，已经是臂展上限 0.592 的 90%。
+  // 之前不敢挪是因为往前挪左手就够不到（-0.40 实测左手离刀柄 25.6mm），
+  // 现在 clampMeleeReach 是双手约束的，左手照样精确落在把上。
+  var MELEE_MOUNT = [0.190, -0.115, -0.400];
+  // 预备姿势：刀尖上挑 + 略微内收。刃口朝前是 -z，绕 x 转正角把刀尖抬起来。
+  var MELEE_REST = [0.42, 0.26, 0.12];
+  var ZERO3 = [0, 0, 0];
+
+  // 挥砍弧线。u∈[0,1] 分三段：抬手 → 劈落 → 收势。返回的是**相对预备姿势**的
+  // 偏移（w/s = 蓄势位与终点位的旋转，wp/sp = 对应的位移，米，第一人称口径）。
+  // 第三人称位移要乘 MELEE_TP_ARC 收窄，否则手会甩出 0.61 的臂展，
+  // IK 一夹就变成两条直臂在空中乱划。
+  var MELEE_ARC = {
+    // 右上 → 左下 斜劈
+    slashR:   { w: [-0.30,  0.85, -0.60], s: [ 0.62, -0.80,  0.72], wp: [ 0.06,  0.10,  0.05], sp: [-0.14, -0.10, -0.16] },
+    // 左下 → 右上 反手横撩
+    slashL:   { w: [ 0.45, -0.80,  0.62], s: [-0.28,  0.88, -0.66], wp: [-0.10, -0.08,  0.04], sp: [ 0.13,  0.09, -0.15] },
+    // 上举 → 直劈（斧、刀的重段）
+    overhead: { w: [-1.05,  0.16, -0.10], s: [ 1.00, -0.10,  0.06], wp: [ 0.02,  0.20,  0.10], sp: [-0.02, -0.16, -0.20] },
+    // 直刺：几乎不转，全靠前送
+    stab:     { w: [ 0.10,  0.20, -0.05], s: [-0.06, -0.04,  0.02], wp: [ 0.04,  0.02,  0.14], sp: [-0.05, -0.02, -0.34] },
+    // 电锯：小幅推锯，不是挥砍
+    saw:      { w: [ 0.06,  0.05,  0.02], s: [-0.10, -0.04, -0.02], wp: [ 0.01,  0.03,  0.05], sp: [-0.01, -0.02, -0.12] },
+    sawB:     { w: [-0.06, -0.05, -0.02], s: [ 0.10,  0.04,  0.02], wp: [-0.01, -0.03,  0.05], sp: [ 0.01,  0.02, -0.12] }
+  };
+  var MELEE_TP_ARC = 0.55;
+  // 抬手结束 / 劈落结束的时间点。抬手只占 20%：服务端是**点击即判定**，
+  // 抬手拖长了就会看到「人已经倒了刀还没落下」。
+  var ARC_W = 0.20, ARC_S = 0.52;
+  var ARC_TMP = { rx: 0, ry: 0, rz: 0, px: 0, py: 0, pz: 0 };
+  function meleeArcPose(style, u, out) {
+    var a = MELEE_ARC[style] || MELEE_ARC.slashR, e;
+    if (u < ARC_W) {                                  // 抬手：本位 → 蓄势位
+      e = rlEase(u / ARC_W);
+      out.rx = a.w[0] * e; out.ry = a.w[1] * e; out.rz = a.w[2] * e;
+      out.px = a.wp[0] * e; out.py = a.wp[1] * e; out.pz = a.wp[2] * e;
+    } else if (u < ARC_S) {                           // 劈落：蓄势位 → 终点位
+      // 混一点线性进去（0.55 平滑 + 0.45 线性）：纯 smoothstep 的中段太"软"，
+      // 挥砍要的是中途最快、末端还带着速度撞上去。
+      var t = (u - ARC_W) / (ARC_S - ARC_W);
+      e = rlEase(t) * 0.55 + t * 0.45;
+      out.rx = rlMix(a.w[0], a.s[0], e); out.ry = rlMix(a.w[1], a.s[1], e); out.rz = rlMix(a.w[2], a.s[2], e);
+      out.px = rlMix(a.wp[0], a.sp[0], e); out.py = rlMix(a.wp[1], a.sp[1], e); out.pz = rlMix(a.wp[2], a.sp[2], e);
+    } else {                                          // 收势：终点位 → 本位
+      e = 1 - rlEase((u - ARC_S) / (1 - ARC_S));
+      out.rx = a.s[0] * e; out.ry = a.s[1] * e; out.rz = a.s[2] * e;
+      out.px = a.sp[0] * e; out.py = a.sp[1] * e; out.pz = a.sp[2] * e;
+    }
+    return out;
+  }
+
+  // 连段：窗口内连续挥砍接下一段，超时归零。dmg/cd 是**倍率**，乘在 WEAPONS 的
+  // 基础值上；arcK 乘在 arcDot 上（arcDot 是命中所需的最小 dot，所以 >1 = 扇区更窄），
+  // rngK 乘在 range 上。server.js 有同一张表，两边必须一致，
+  // 否则客户端预测的段号和服务端真正结算的段号会错开，动作和伤害就对不上。
+  var MELEE_COMBO_WINDOW = 900;
+  var MELEE_COMBO = {
+    knife: [{ s: 'slashR', dmg: 1.00, cd: 0.58 },
+            { s: 'slashL', dmg: 1.00, cd: 0.58 },
+            { s: 'stab',   dmg: 1.45, cd: 1.30, arcK: 1.35, rngK: 1.15 }],
+    kukri: [{ s: 'slashR', dmg: 1.00, cd: 0.62 },
+            { s: 'slashL', dmg: 1.15, cd: 1.25 }],
+    katana:[{ s: 'slashR',   dmg: 1.00, cd: 0.60 },
+            { s: 'slashL',   dmg: 1.00, cd: 0.60 },
+            { s: 'overhead', dmg: 1.55, cd: 1.35, arcK: 0.85 }],
+    axe:   [{ s: 'overhead', dmg: 1.00, cd: 1.00 },
+            { s: 'slashR',   dmg: 1.10, cd: 1.15, arcK: 0.85 }],
+    chainsaw: [{ s: 'saw',  dmg: 1.00, cd: 1.00 },
+               { s: 'sawB', dmg: 1.00, cd: 1.00 }]
+  };
+  function meleeStep(id, stage) {
+    var c = MELEE_COMBO[id] || MELEE_COMBO.knife;
+    return c[((stage % c.length) + c.length) % c.length];
+  }
+  // 动作时长跟着这一段的冷却走（占 82%，留一点收势余量）。
+  // 匕首连段一刀 181ms、收尾直刺 405ms、斧子重砍 779ms——节奏差别是看得出来的。
+  function meleeSwingDur(id, stage) {
+    var wpn = WEAPONS[id] || WEAPONS.knife;
+    return clamp(wpn.cooldown * meleeStep(id, stage).cd * 0.82 / 1000, 0.14, 0.85);
+  }
   var ARM_L1 = 0.315;    // 肩→肘
   var ARM_L2 = 0.295;    // 肘→掌心
   // 持枪时肘该往哪拐：斜下 + 外侧 + 略后。左右对称（x 乘 side）。
@@ -275,6 +376,9 @@ var lastDrySound = 0;
   var recoilZ = 0;
   var bloom = 0;              // 连发累积散射（与服务端各自维护，参数相同所以结果一致）
   var swingTime = 0;
+  var swingStyle = 'slashR';     // 当前挥砍用的弧线
+  var swingDur = 0.24;           // 当前挥砍时长（按连段的 cd 倍率算）
+  var localComboStage = 0;       // 本地预测的连段段号
   var bobPhase = 0;
   var sendStateTimer = 0;
 var lastLeaderboardUpdate = 0;
@@ -2630,7 +2734,11 @@ var smokeParticles = [];
     // 原来是 r=0.125 摆在 ±0.268，外缘直接顶到 0.40，肩宽做到 80cm，
     // 远看两片就是横着支出去的翅膀。真人连甲的肩宽也就 55~60cm。
     var shoulderL = new THREE.Mesh(new THREE.SphereGeometry(0.098, 14, 10), vestMat);
-    shoulderL.scale.set(1.0, 0.64, 1.10); shoulderL.position.set(-0.228, 1.468, -0.01);
+    // z 向从 1.10 收到 0.80：1.10 等于前后 21.6cm 厚，真装具的肩片也就 15cm 上下。
+    // 顺带解决一件事：侧身站姿把右肩往后带了 11cm，长枪的托正好停在这片里，
+    // 精确椭球实测 AWP 陷进去 72mm；收薄之后前表面往后退，只剩 55mm，
+    // 而上臂插在护肩里的深度一点没变（66mm）——肩膀照样盖得住。
+    shoulderL.scale.set(1.0, 0.64, 0.80); shoulderL.position.set(-0.228, 1.468, -0.01);
     shoulderL.castShadow = true;
     var shoulderR = shoulderL.clone(); shoulderR.position.x = 0.228;
     chest.add(shoulderL, shoulderR);
@@ -2814,10 +2922,51 @@ var smokeParticles = [];
       // 换弹动画：已播时长 / 总时长 / 播的是哪把枪的模型
       reloadAnim: 0, reloadDur: 0, reloadModel: null, reloadId: '',
       // 两只手在 weaponGroup 局部的落点（换弹时枪会侧倾，手要跟着枪重解）
-      gripWG: gripWG, suppWG: suppWG, suppFullWG: suppFullWG, suppFrac: suppFrac
+      gripWG: gripWG, suppWG: suppWG, suppFullWG: suppFullWG, suppFrac: suppFrac,
+      // 长枪护木点的**建模值**。suppFrac 每帧都会被 remoteSupportPoint 改写
+      // （近战时会被写成 1.0），换回长枪时得有个干净的初值可用。
+      gunSuppFrac: suppFrac,
+      // 当前武器的挂点 / 预备姿势 / 是否双手持握，由 setHoldAnchors 维护
+      mount: WEAPON_MOUNT, holdRest: null, twoHand: true,
+      // 挥砍：这一刀是哪种弧线、多长
+      swingStyle: 'slashR', swingDur: 0.18
     };
     remotePlayers.set(id, r);
     return r;
+  }
+
+  // 握持点随武器类型切换。近战有自己的握把点、挂点和预备姿势（MELEE_GRIP /
+  // MELEE_MOUNT / MELEE_REST）；单手武器把左手点并到右手点上，并置 twoHand=false，
+  // 让持握 IK 只解右臂——匕首上挂两只手是原来最明显的破绽。
+  function setHoldAnchors(r, id, isMelee) {
+    if (isMelee) {
+      var mg = MELEE_GRIP[id] || MELEE_GRIP.knife, s = MELEE_TP_SCALE;
+      r.gripWG.set(mg.r[0] * s, mg.r[1] * s, mg.r[2] * s);
+      r.twoHand = !!mg.l;
+      if (mg.l) r.suppFullWG.set(mg.l[0] * s, mg.l[1] * s, mg.l[2] * s);
+      else r.suppFullWG.copy(r.gripWG);
+      r.suppWG.copy(r.suppFullWG);
+      r.mount = MELEE_MOUNT;
+      r.holdRest = MELEE_REST;
+    } else {
+      r.gripWG.set(GRIP_LOCAL[0], GRIP_LOCAL[1], GRIP_LOCAL[2]);
+      r.suppFullWG.set(SUPP_LOCAL[0], SUPP_LOCAL[1], SUPP_LOCAL[2]);
+      // suppFrac 每帧被 remoteSupportPoint 改写，近战时会写成 1.0。
+      // 换回长枪必须先取回建模值，否则左手第一帧落在整条护木的末端上。
+      r.suppFrac = r.gunSuppFrac;
+      // 长枪的护木点要按 suppFrac 往握把方向收（建模时按 pitch=0 搜出来的可达点）
+      r.suppWG.set(
+        GRIP_LOCAL[0] + (SUPP_LOCAL[0] - GRIP_LOCAL[0]) * r.suppFrac,
+        GRIP_LOCAL[1] + (SUPP_LOCAL[1] - GRIP_LOCAL[1]) * r.suppFrac,
+        GRIP_LOCAL[2] + (SUPP_LOCAL[2] - GRIP_LOCAL[2]) * r.suppFrac
+      );
+      r.twoHand = true;
+      r.mount = WEAPON_MOUNT;
+      r.holdRest = null;
+    }
+    var mo = r.mount, rest = r.holdRest || ZERO3;
+    r.weaponGroup.position.set(mo[0], mo[1], mo[2]);
+    r.weaponGroup.rotation.set(rest[0], rest[1], rest[2]);
   }
 
   // 确保远端玩家持有指定武器模型（懒加载 + 缓存）
@@ -2834,15 +2983,6 @@ var smokeParticles = [];
       // 臂长 0.55 的身体根本跨不过去——两只手怎么摆都够不到。缩到实物尺寸后
       // 手距变成 0.31m，右手握把、左手托护木才有可能同时成立。
       model.scale.setScalar(isMelee ? MELEE_TP_SCALE : WEAPON_TP_SCALE);
-      // 按托底对齐（见 TP_POCKET_Z）。这里量的是**模型局部**盒：model 还没进
-      // 场景树，setFromObject 只会拿它自己的 matrixWorld（=缩放矩阵）去算。
-      // 只许往前错（min(0,…)）——手枪托底本来就在手边，往后挪会插进胸口。
-      // 枪往前错，握把和护木跟着一起错，两只手由持枪 IK 自动跟上（updateRemoteHold）。
-      if (!isMelee) {
-        var tpBB = new THREE.Box3().setFromObject(model);
-        model.userData.tpZ = Math.min(0, TP_POCKET_Z - tpBB.max.z);
-        model.position.z = model.userData.tpZ;
-      }
       r.weaponGroup.add(model);
       r.weaponCache[key] = model;
     }
@@ -2850,6 +2990,9 @@ var smokeParticles = [];
       r.weaponCache[k].visible = (k === key);
     });
     r.shownWeapon = key;
+    // 缓存命中时上面整段是跳过的，所以挂点必须在**外面**设：
+    // 换回一把用过的刀时，挂点还留在上一把枪的肩窝位置上。
+    setHoldAnchors(r, id, isMelee);
   }
 
   function updateRemoteWeaponVisual(r) {
@@ -3990,7 +4133,11 @@ var smokeParticles = [];
     var r = remotePlayers.get(msg.id);
     if (r) {
       addSlashEffect(r.renderPos.clone(), r.renderYaw);
-      r.swingAnim = 0.18;
+      // 段号由服务端给（它才是判定方），弧线和时长照段号取
+      var stage = msg.stage || 0;
+      r.swingStyle = meleeStep(msg.weaponId, stage).s;
+      r.swingDur = meleeSwingDur(msg.weaponId, stage);
+      r.swingAnim = r.swingDur;
       playMeleeSound(msg.weaponId, true);
     }
   }
@@ -4189,6 +4336,12 @@ var smokeParticles = [];
     if (triggerDown) { triggerDown = false; send({ t: 'attack', down: false }); }
     ads = false;
     bloom = 0;                 // 换枪清零累积散射（每把枪的 bloomMax 不同，不能沿用）
+    // 连段归零：换手之后第一刀必须是第一段。不清的话拿起斧子的第一下
+    // 可能直接播成第二段的横劈，而服务端那边算的是第一段。
+    localComboStage = 0; lastLocalMelee = 0;
+    swingTime = 0;
+    vmMeleeGroup.rotation.set(0, 0, 0);
+    vmMeleeGroup.position.set(0, 0, 0);
     applyWeaponVisibility();
     updateHUD();
     send({ t: 'switch', slot: local.current });
@@ -4301,9 +4454,21 @@ var smokeParticles = [];
   function localMelee() {
     var now = performance.now();
     var wpn = WEAPONS[local.melee];
-    if (now - lastLocalMelee < wpn.cooldown) return;
+    var combo = MELEE_COMBO[local.melee] || MELEE_COMBO.knife;
+    // 预测这一刀是第几段。规则必须和服务端 meleeAttack 逐字一致
+    // （窗口 900ms、按上一段的 cd 倍率算冷却），否则本地播的动作
+    // 和真正结算的段位会错开——看到的是收尾重砍，挨的是第一段的伤害。
+    var stage = 0;
+    if (lastLocalMelee && now - lastLocalMelee <= MELEE_COMBO_WINDOW) {
+      stage = (localComboStage + 1) % combo.length;
+    }
+    var prev = combo[localComboStage] || combo[0];
+    if (now - lastLocalMelee < wpn.cooldown * prev.cd) return;
     lastLocalMelee = now;
-    swingTime = 0.24;
+    localComboStage = stage;
+    swingStyle = combo[stage].s;
+    swingDur = meleeSwingDur(local.melee, stage);
+    swingTime = swingDur;
     playMeleeSound(local.melee, false);
   }
 
@@ -4439,15 +4604,17 @@ var smokeParticles = [];
       bloom = Math.max(0, bloom - dt * ((rw && rw.bloomDecay) || 0.05));
     }
 
-    // 近战挥砍动画
+    // 近战挥砍动画。和第三人称共用一张弧线表（MELEE_ARC），只是第一人称
+    // 位移不打折——手是长在模型上的固定件，没有臂展约束。
     if (swingTime > 0) {
       swingTime -= dt;
-      var t = 1 - Math.max(swingTime, 0) / 0.24;
-      vmMeleeGroup.rotation.x = -1.35 * Math.sin(t * Math.PI);
-      vmMeleeGroup.position.y = Math.sin(t * Math.PI) * 0.1;
+      var su = clamp(1 - Math.max(swingTime, 0) / swingDur, 0, 1);
+      var ap = meleeArcPose(swingStyle, su, ARC_TMP);
+      vmMeleeGroup.rotation.set(ap.rx, ap.ry, ap.rz);
+      vmMeleeGroup.position.set(ap.px, ap.py, ap.pz);
       if (swingTime <= 0) {
-        vmMeleeGroup.rotation.x = 0;
-        vmMeleeGroup.position.y = 0;
+        vmMeleeGroup.rotation.set(0, 0, 0);
+        vmMeleeGroup.position.set(0, 0, 0);
       }
     }
 
@@ -4479,7 +4646,11 @@ var smokeParticles = [];
         // 上身/头部随俯仰角瞄准。行走时枪口跟着步频轻微上下——
         // 摆动加在**枪**上而不是加在手臂上：手臂是照枪反解的，
         // 在 IK 之后再去转肩膀等于把手从握把上拧下来（实测偏 2.8cm）。
-        r.aimGroup.rotation.x = r.renderPitch + sw * 0.055;
+        // 近战只跟 MELEE_PITCH_K 倍（见该常量处的实测数据），头照旧跟满。
+        var aimP = r.current === 'melee'
+          ? clamp(r.renderPitch * MELEE_PITCH_K, -MELEE_PITCH_MAX, MELEE_PITCH_MAX)
+          : r.renderPitch;
+        r.aimGroup.rotation.x = aimP + sw * 0.055;
         if (r.headGroup) r.headGroup.rotation.x = r.renderPitch * 0.7;
         // 行走上下起伏
         r.bodyGroup.rotation.x = 0;
@@ -4505,22 +4676,44 @@ var smokeParticles = [];
       if (r.fireAnim > 0) {
         r.fireAnim -= dt;
         var fp = 1 - Math.max(r.fireAnim, 0) / 0.15;
-        // 后坐是把枪往后（+z）推，基准取 WEAPON_MOUNT[2]
-        r.weaponGroup.position.z = WEAPON_MOUNT[2] + Math.sin(fp * Math.PI) * 0.1;
-        if (r.fireAnim <= 0) r.weaponGroup.position.z = WEAPON_MOUNT[2];
+        // 后坐是把枪往后（+z）推，基准取当前挂点（近战挂点和枪不一样）
+        var fmo = r.mount || WEAPON_MOUNT;
+        r.weaponGroup.position.z = fmo[2] + Math.sin(fp * Math.PI) * 0.1;
+        if (r.fireAnim <= 0) r.weaponGroup.position.z = fmo[2];
       }
-      if (r.swingAnim > 0) {
-        r.swingAnim -= dt;
-        var spg = 1 - Math.max(r.swingAnim, 0) / 0.18;
-        r.weaponGroup.rotation.x = -1.6 * Math.sin(spg * Math.PI);
-        if (r.swingAnim <= 0) r.weaponGroup.rotation.x = 0;
-      }
+      // 近战挥砍：分段弧线，三个轴一起转 + 位移。原来是 rotation.x 一条正弦，
+      // 而且手臂完全不参与——刀在空中自己翻，两只手还端在预备位置上，
+      // 等于刀脱手了。现在挥砍只改 weaponGroup，手由下面的持握 IK 跟着刀走。
+      // 计时在这儿走，摆位交给 poseMeleeWeapon（每帧都要重写一遍，
+      // 见那个函数上的注释：clampMeleeReach 是原地累加的）。
+      if (r.swingAnim > 0) r.swingAnim -= dt;
 
-      // 双手跟住枪。必须放在后坐/挥砍**之后**（枪已经挪好位置）、投掷/换弹
-      // **之前**（那两个动作要抢手）。近战暂时排除：刀沿用的是步枪握把点，
-      // 得先给刀配自己的挂点。
-      if (r.alive && r.current !== 'melee') {
-        var holdMask = r.reloadDur > 0 ? 0 : (r.throwAnim > 0 ? 2 : 3);
+      // 双手跟住武器。必须放在后坐/挥砍**之后**（武器已经挪好位置）、
+      // 投掷/换弹**之前**（那两个动作要抢手）。
+      if (r.alive) {
+        var isM = r.current === 'melee';
+        // 俯射时左臂会穿胸：枪口往下压，护木落到左肩下方约 0.81m 处，超出 0.61 的
+        // 臂展，肘就被拉直、小臂横切过胸口（pitch -1.2 实测扎进 96mm）。
+        // 解法是加大侧身角——右肩再往后带一点，左肩让开，护木自然靠近左肩。
+        // 系数 0.32、上限 0.35rad(20°) 是搜出来的：这一组让 pitch 0 到 -1.0 全程
+        // 保持 37mm 的静态基线（不加时 -1.0 已经 57mm），-1.2 也从 96 降到 62。
+        // 上限不能去掉：不封顶时 -1.4 能压到 76mm，但需要额外 36° 扭转，
+        // 加上本来的 BLADE 就是胸对髋 67°，人转不到那个角度。
+        // 近战不需要这一项：两个握把点最远也只隔 156mm（斧），够不到的问题不存在。
+        var negP = Math.max(0, -r.renderPitch);
+        r.chest.rotation.y = isM ? BLADE
+          : BLADE - Math.min(AIM_BLADE_MAX, AIM_BLADE_K * negP * negP);
+        // 单手近战只解右臂（mask 1），左臂留给走路/待机摆动
+        var bothHands = r.twoHand !== false;
+        var holdMask = r.reloadDur > 0 ? 0
+          : (r.throwAnim > 0 ? (bothHands ? 2 : 0) : (bothHands ? 3 : 1));
+        // 反解之前先把武器摆好、再把甩出臂展的部分拉回来（只对近战：枪的挂点
+        // 是固定的，平移它会让画出来的枪口和真正的弹道错开）。
+        // 传的是同一个 holdMask：拉回只约束真的握着武器的那只手。
+        if (isM && holdMask) {
+          poseMeleeWeapon(r);
+          clampMeleeReach(r, holdMask);
+        }
         if (holdMask) updateRemoteHold(r, holdMask);
       }
       // 投掷动作：右臂**先向后上方引拍**再过顶甩出。要覆盖在上面的持枪姿势之后写，
@@ -4575,19 +4768,29 @@ var smokeParticles = [];
   // 转**的，手臂却长在 chest 上不动。实测抬到 ±1.2 rad 时右手离握把 30cm、
   // 左手离护木 64cm——枪整个飘在两手外面。所以每帧都得按枪的当前位置重解。
   var HOLD_A = new THREE.Vector3(), HOLD_B = new THREE.Vector3(), HOLD_P = new THREE.Vector3();
-  // 各枪为了对齐托底在 weaponGroup 里前后错开过（ensureRemoteWeapon），
-  // 手的落点得错同样的量，否则短枪的手会往后飘、长枪的手抓在护木前面。
-  function anchorZ(r) {
-    var m = r.weaponCache[r.shownWeapon];
-    return (m && m.userData.tpZ) || 0;
-  }
+  // 支撑手允许伸到臂展的多少：0.97 已经贴着极限，但降下来只会把左手往握把方向
+  // 拖（实测 0.84 时静止 suppFrac 从 0.86 掉到 0.44，双手并在一起），
+  // 而对「手臂穿胸」几乎没有帮助——那个靠侧身角解决（见 AIM_BLADE_K）。
+  var HOLD_SLACK = 0.97;
+  // 俯射时追加的侧身角（见 updateRemotePlayers 里的用法与实测数据）
+  var AIM_BLADE_K = 0.32, AIM_BLADE_MAX = 0.35;
+  // 近战不跟满俯仰角。服务端的近战判定是**水平扇区**（meleeAttack 里 dot 只取
+  // dx/dz），pitch -1.2 时前向的水平分量只剩 cos(1.2)=0.36，比任何一把刀的
+  // arcDot(0.45~0.6) 都小——低头本来就打不中人。所以让刀跟着视线一起压下去
+  // 纯亏：压 1.2rad 正好把刀转进小腹，实测刀扎进躯干 159mm、左手离刀柄 150mm。
+  // 枪不能这么干：枪口画的方向就是子弹飞的方向，压系数会让两者对不上。
+  //
+  // 封顶值扫出来的：残留穿模只在极端俯角出现，而且深度随封顶值单调涨——
+  // 0.50 时太刀第二段 52.4mm，0.44→31.2，0.40→17.6，0.36→4.1，0.32 起归零
+  // （五把刀 × 全部段数 × pitch 一路扫到 -1.4 全为 0）。取 0.32=18.3°。
+  // K=0.45 意味着只有 |pitch| > 0.71rad(41°) 才会撞到封顶，正常交战角度不受影响。
+  var MELEE_PITCH_K = 0.45, MELEE_PITCH_MAX = 0.32;
   function remoteSupportPoint(r) {
     // 握把、护木都换到 chest 坐标，再沿这条线二分找臂展够得到的最远点。
     // 和建模时同一套逻辑，只是这回每帧算：枪一转，可达范围就跟着变。
-    var az = anchorZ(r);
-    HOLD_A.copy(remoteChestPoint(r, r.weaponGroup, r.gripWG.x, r.gripWG.y, r.gripWG.z + az));
-    HOLD_B.copy(remoteChestPoint(r, r.weaponGroup, r.suppFullWG.x, r.suppFullWG.y, r.suppFullWG.z + az));
-    var sh = r.leftArm.position, maxR = (ARM_L1 + ARM_L2) * 0.97;
+    HOLD_A.copy(remoteChestPoint(r, r.weaponGroup, r.gripWG.x, r.gripWG.y, r.gripWG.z));
+    HOLD_B.copy(remoteChestPoint(r, r.weaponGroup, r.suppFullWG.x, r.suppFullWG.y, r.suppFullWG.z));
+    var sh = r.leftArm.position, maxR = (ARM_L1 + ARM_L2) * HOLD_SLACK;
     function reach(t) {
       var dx = HOLD_A.x + (HOLD_B.x - HOLD_A.x) * t - sh.x;
       var dy = HOLD_A.y + (HOLD_B.y - HOLD_A.y) * t - sh.y;
@@ -4596,9 +4799,21 @@ var smokeParticles = [];
     }
     var lo = 0, hi = 1;
     if (reach(1) > maxR) {
-      for (var it = 0; it < 20; it++) {
-        var mid = (lo + hi) * 0.5;
-        if (reach(mid) > maxR) hi = mid; else lo = mid;
+      if (reach(0) > maxR) {
+        // 两端都够不到。原来这里二分会收敛到 t=0，也就是"退回握把"——可对刀来说
+        // 握把那端往往比护木端**更远**（katana 的左手点在刀柄更后面），退回去等于
+        // 主动选了最差的点，实测左手离刀柄 15.5mm 起、最多 43.2mm。
+        // reach(t) 是点到线段的距离，对 t 是凸的，最近点直接投影就有，不用搜。
+        var ex = HOLD_B.x - HOLD_A.x, ey = HOLD_B.y - HOLD_A.y, ez = HOLD_B.z - HOLD_A.z;
+        var ll = ex * ex + ey * ey + ez * ez;
+        lo = ll > 1e-9
+          ? clamp(((sh.x - HOLD_A.x) * ex + (sh.y - HOLD_A.y) * ey + (sh.z - HOLD_A.z) * ez) / ll, 0, 1)
+          : 0;
+      } else {
+        for (var it = 0; it < 20; it++) {
+          var mid = (lo + hi) * 0.5;
+          if (reach(mid) > maxR) hi = mid; else lo = mid;
+        }
       }
     } else lo = 1;
     // 换弹动画拿 suppWG 当"手在枪上的本位"，这里顺手刷新它，
@@ -4611,6 +4826,64 @@ var smokeParticles = [];
     );
     return HOLD_P.lerpVectors(HOLD_A, HOLD_B, lo);
   }
+  // 近战武器每帧的摆位（预备姿势 + 挥砍弧线）。必须**每帧从挂点重算**，
+  // 不能只在挥砍时写一次：clampMeleeReach 是就地 add 的单向拉回，
+  // 挥砍结束后没人重置的话，它会一帧一帧把刀往肩膀上拽，再也不回来。
+  function poseMeleeWeapon(r) {
+    var mo = r.mount || WEAPON_MOUNT, rest = r.holdRest || ZERO3;
+    if (r.swingAnim > 0) {
+      var su = clamp(1 - r.swingAnim / (r.swingDur || 0.18), 0, 1);
+      var ap = meleeArcPose(r.swingStyle || 'slashR', su, ARC_TMP);
+      r.weaponGroup.rotation.set(rest[0] + ap.rx, rest[1] + ap.ry, rest[2] + ap.rz);
+      r.weaponGroup.position.set(
+        mo[0] + ap.px * MELEE_TP_ARC,
+        mo[1] + ap.py * MELEE_TP_ARC,
+        mo[2] + ap.pz * MELEE_TP_ARC
+      );
+    } else {
+      r.weaponGroup.rotation.set(rest[0], rest[1], rest[2]);
+      r.weaponGroup.position.set(mo[0], mo[1], mo[2]);
+    }
+  }
+  // 近战挥砍会把握把甩到臂展之外（斧头过顶劈实测 0.661m，臂展只有 0.61）。
+  // IK 一撞极限就把肘拉直、手停在半空：实测右手离斧柄 52.9mm，等于斧子脱手。
+  // 这里**不改弧线形状**（转起来才好看），只把武器整体沿「肩→握把」方向拉回来：
+  // 平移对握把是刚性的，一步就精确落在臂展边界上。
+  //
+  // 双手武器要**同时**满足两只手：只拉右手的话左手照样脱把（刀柄挂在 z=-0.40 时
+  // 实测左手离刀柄 25.6mm、左肩到左手点 0.689m）。「握把在右肩球内」和「护木点在
+  // 左肩球内」各自都是凸集（球），所以交替往两个球上投影就会收敛到交集里
+  // （POCS）。实测最多 3 轮就不动了，两只手同时精确落在 0.5917 上、间距都回到
+  // 12mm 静态基线；握把速度在 N=120/480 下都是 6.68 m/s（完全平，说明没在
+  // 迭代里引入抖动——真断点的 m/s 会随 N 线性涨）。
+  var RCH_A = new THREE.Vector3(), RCH_B = new THREE.Vector3(), RCH_Q = new THREE.Quaternion();
+  function clampReachOne(r, lp, arm, maxR) {
+    RCH_A.set(lp.x, lp.y, lp.z);
+    r.weaponGroup.localToWorld(RCH_A);
+    arm.getWorldPosition(RCH_B);
+    RCH_A.sub(RCH_B);
+    var d = RCH_A.length();
+    if (!(d > maxR)) return false;
+    RCH_A.multiplyScalar(maxR / d - 1);         // 该手需要的世界位移（指向肩）
+    r.aimGroup.getWorldQuaternion(RCH_Q).invert();
+    r.weaponGroup.position.add(RCH_A.applyQuaternion(RCH_Q));  // 换到 aimGroup 空间再加
+    r.group.updateMatrixWorld(true);
+    return true;
+  }
+  function clampMeleeReach(r, mask) {
+    var maxR = (ARM_L1 + ARM_L2) * HOLD_SLACK;
+    r.group.updateMatrixWorld(true);
+    for (var it = 0; it < 8; it++) {
+      var moved = false;
+      // 只约束**真的握着武器的那只手**（mask 和 updateRemoteHold 同一套：1=右 2=左）。
+      // 投掷时右手去掏手雷了，这时候还按右手拉回，就会为了一只没握把的手平移武器。
+      if ((mask & 1) && clampReachOne(r, r.gripWG, r.rightArm, maxR)) moved = true;
+      // 左手用 suppFullWG（护木/刀柄后段的固定锚点），不用 suppWG——后者是
+      // remoteSupportPoint 每帧在线段上滑出来的，会跟着这次平移变，不是刚性点。
+      if ((mask & 2) && clampReachOne(r, r.suppFullWG, r.leftArm, maxR)) moved = true;
+      if (!moved) return;
+    }
+  }
   // mask: 1=右手 2=左手（投掷时右手另有任务，换弹时两只手都被换弹接管）
   function updateRemoteHold(r, mask) {
     var model = r.weaponCache[r.shownWeapon];
@@ -4621,16 +4894,19 @@ var smokeParticles = [];
       solveArm(r.leftArm, sp.x, sp.y, sp.z, -ARM_POLE[0], ARM_POLE[1], ARM_POLE[2], true);
     }
     if (mask & 1) {
-      var az = anchorZ(r);
-      var gp = remoteChestPoint(r, r.weaponGroup, r.gripWG.x, r.gripWG.y, r.gripWG.z + az);
+      var gp = remoteChestPoint(r, r.weaponGroup, r.gripWG.x, r.gripWG.y, r.gripWG.z);
       solveArm(r.rightArm, gp.x, gp.y, gp.z, ARM_POLE[0], ARM_POLE[1], ARM_POLE[2], true);
     }
   }
+
   function stopRemoteReload(r) {
     if (r.reloadModel) resetReloadParts(r.reloadModel);
     r.reloadDur = 0; r.reloadAnim = 0; r.reloadModel = null; r.reloadId = '';
-    r.weaponGroup.position.set(WEAPON_MOUNT[0], WEAPON_MOUNT[1], WEAPON_MOUNT[2]);
-    r.weaponGroup.rotation.set(0, 0, 0);
+    // 回**当前武器**的挂点和预备姿势：换弹只发生在枪上，但这个函数也被
+    // 「换成近战 → 掐掉换弹」那条路径调用，写死 WEAPON_MOUNT 会把刀摆回肩窝。
+    var mo = r.mount || WEAPON_MOUNT, rest = r.holdRest || ZERO3;
+    r.weaponGroup.position.set(mo[0], mo[1], mo[2]);
+    r.weaponGroup.rotation.set(rest[0], rest[1], rest[2]);
     // 手臂回基线。必须连 y/z 一起写回：行走摆动每帧只改 rotation.x，
     // 动画期间 solveArm 塞进去的 y/z 没人清，不写回就会一直歪着。
     [r.rightArm, r.leftArm].forEach(function (arm) {
@@ -4664,12 +4940,11 @@ var smokeParticles = [];
     r.group.updateMatrixWorld(true);
 
     // 右手跟住握把（keepBase=true：不要把动画姿势写成基线，否则动完回不去）
-    var az = anchorZ(r);
-    var gp = remoteChestPoint(r, r.weaponGroup, r.gripWG.x, r.gripWG.y, r.gripWG.z + az);
+    var gp = remoteChestPoint(r, r.weaponGroup, r.gripWG.x, r.gripWG.y, r.gripWG.z);
     solveArm(r.rightArm, gp.x, gp.y, gp.z, ARM_POLE[0], ARM_POLE[1], ARM_POLE[2], true);
 
     // 左手：分段找目标。护木点和弹匣井点都随枪走，掏匣点固定在胸挂上。
-    var hp = remoteChestPoint(r, r.weaponGroup, r.suppWG.x, r.suppWG.y, r.suppWG.z + az);
+    var hp = remoteChestPoint(r, r.weaponGroup, r.suppWG.x, r.suppWG.y, r.suppWG.z);
     var hx = hp.x, hy = hp.y, hz = hp.z;                   // 护木（本位）
     var POUCH = [-0.0945, 1.235, -0.240];                  // 最左那个胸挂弹匣包的开口
     var d = model.userData || {};
@@ -4856,15 +5131,5 @@ var smokeParticles = [];
   bindMenu();
   updateHUD();
   animate();
-
-  // 临时穿模检测钩子（验完删除）
-  window.__CL = {
-    THREE: THREE, createRemotePlayer: createRemotePlayer, remotePlayers: remotePlayers,
-    ensureRemoteWeapon: ensureRemoteWeapon, updateRemoteWeaponVisual: updateRemoteWeaponVisual,
-    startRemoteReload: startRemoteReload, updateRemoteReload: updateRemoteReload,
-    updateRemotePlayers: updateRemotePlayers, updateRemoteHold: updateRemoteHold,
-    WEAPON_MOUNT: WEAPON_MOUNT, ARM_L1: ARM_L1, ARM_L2: ARM_L2,
-    WEAPONS: WEAPONS, scene: scene, gunModels: gunModels, meleeModels: meleeModels
-  };
 
 })();

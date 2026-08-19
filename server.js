@@ -13,7 +13,7 @@ const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const TICK_RATE = 1000 / 30; // 30Hz
 const ARENA_HALF = 46;        // 场地半宽（x/z 范围 -46..46）
@@ -129,6 +129,31 @@ const WEAPONS = {
       color: 0x3a3a3a,
     },
 };
+
+// 近战连段。窗口内连续挥砍会接上下一段，超时归零。
+// dmg/cd 是倍率，乘在 WEAPONS 的基础值上；arcK 乘在 arcDot 上（arcDot 是命中所需的
+// 最小 dot，所以 >1 = 扇区更窄），rngK 乘在 range 上。
+// 客户端 game_v2.js 里有**同一张表**，两边必须逐字一致：客户端靠它预测段号来播动作，
+// 对不上就会出现「看到的是收尾重砍，挨的是第一段伤害」。
+const MELEE_COMBO_WINDOW = 900;
+const MELEE_COMBO = {
+  knife: [{ dmg: 1.00, cd: 0.58 },
+          { dmg: 1.00, cd: 0.58 },
+          { dmg: 1.45, cd: 1.30, arcK: 1.35, rngK: 1.15 }],
+  kukri: [{ dmg: 1.00, cd: 0.62 },
+          { dmg: 1.15, cd: 1.25 }],
+  katana: [{ dmg: 1.00, cd: 0.60 },
+           { dmg: 1.00, cd: 0.60 },
+           { dmg: 1.55, cd: 1.35, arcK: 0.85 }],
+  axe:   [{ dmg: 1.00, cd: 1.00 },
+          { dmg: 1.10, cd: 1.15, arcK: 0.85 }],
+  chainsaw: [{ dmg: 1.00, cd: 1.00 },
+             { dmg: 1.00, cd: 1.00 }],
+};
+function meleeStep(id, stage) {
+  const c = MELEE_COMBO[id] || MELEE_COMBO.knife;
+  return c[((stage % c.length) + c.length) % c.length];
+}
 
 // 地图掩体（与客户端保持一致）
 const BOXES = [
@@ -515,6 +540,7 @@ class Game {
         ammoSecondary: WEAPONS.pistol.mag,
       lastFire: 0,
       lastMelee: 0,
+      comboStage: 0,     // 近战连段：这一刀播到第几段（见 meleeAttack）
         lastSmoke: 0,
         lastGrenade: 0,
         lastDamageTime: 0,
@@ -659,6 +685,8 @@ class Game {
     p.reloading = false;
     p.triggerDown = false;
     p.bloom = 0;
+    p.comboStage = 0;          // 重生后连段归零，不要接着上一条命的段号
+    p.lastMelee = 0;
   }
 
   handleState(p, msg) {
@@ -703,6 +731,8 @@ class Game {
     p.triggerDown = false;
       p.reloading = false;
       p.bloom = 0;             // 换枪清零累积散射（每把枪的 bloomMax 不同，不能沿用）
+      p.comboStage = 0;        // 收刀就断连段，回来重新从第一段起手
+      p.lastMelee = 0;
   }
 
   handleReload(p) {
@@ -955,10 +985,36 @@ class Game {
   meleeAttack(p, yaw, pitch) {
     const now = Date.now();
     const wpn = WEAPONS[p.melee];
-    if (now - p.lastMelee < wpn.cooldown) return;
+    const combo = MELEE_COMBO[p.melee] || MELEE_COMBO.knife;
+
+    // 这一刀是第几段：窗口内接续，超时从头。规则和客户端 localMelee 逐字一致。
+    // 冷却按**上一段**的 cd 倍率算——收尾重砍之后要等更久才能再起手。
+    let stage = 0;
+    if (p.lastMelee && now - p.lastMelee <= MELEE_COMBO_WINDOW) {
+      stage = (p.comboStage + 1) % combo.length;
+    }
+    const prev = combo[p.comboStage] || combo[0];
+    if (now - p.lastMelee < wpn.cooldown * prev.cd) return;
     p.lastMelee = now;
+    p.comboStage = stage;
+
+    const step = combo[stage];
+    const range = wpn.range * (step.rngK || 1);
+    // arcDot 是命中所需的最小 dot：arcK > 1 收窄扇区，< 1 放宽。
+    const arcDot = clamp(wpn.arcDot * (step.arcK || 1), -1, 1);
+    const amount = wpn.damage * (step.dmg || 1);
 
     const dir = normalize(forwardFromYawPitch(yaw, pitch));
+    // 近战扇区是**水平**的，所以要用 dir 的水平投影再归一化。
+    // 原来直接拿 3D 的 dir 去点乘一个水平方向，等于把 dot 白乘了一个
+    // cos(pitch)：pitch -1.2 时 cos=0.362，比最宽的匕首 arcDot(0.45) 还小，
+    // 于是稍微低头就完全打不中人——贴着脸也不行。俯仰方向的容差由下面的
+    // |dy| <= 2.5 负责，不该再混进扇区判定里。
+    // 这也和客户端画出来的一致：MELEE_PITCH_K/MAX 把刀压在近水平（最多 18°），
+    // 扇区跟着水平才不会「看着砍在身上、判定说没中」。
+    const fh = Math.hypot(dir.x, dir.z);
+    const fx = fh > 1e-6 ? dir.x / fh : 0;
+    const fz = fh > 1e-6 ? dir.z / fh : 0;
     const hitPlayers = [];
 
     for (const q of this.players.values()) {
@@ -966,32 +1022,37 @@ class Game {
       const dx = q.pos.x - p.pos.x;
       const dz = q.pos.z - p.pos.z;
       const dist = Math.sqrt(dx * dx + dz * dz);
-      if (dist > wpn.range + PLAYER_RADIUS) continue;
+      if (dist > range + PLAYER_RADIUS) continue;
       if (Math.abs(q.pos.y - p.pos.y) > 2.5) continue;
 
       // 目标必须在挥砍扇区内
-      const dot = dist > 0.001 ? (dx / dist) * dir.x + (dz / dist) * dir.z : 1;
-      if (dot < wpn.arcDot) continue;
+      const dot = dist > 0.001 ? (dx / dist) * fx + (dz / dist) * fz : 1;
+      if (dot < arcDot) continue;
 
-      // 有掩体阻挡则近战无法命中
+      // 有掩体阻挡则近战无法命中。这条射线也必须是水平的：下面比的是
+      // t < dist，而 dist 是**水平**距离，拿带俯仰的 3D 方向去比就是两套
+      // 尺度混用（俯角一大，射线主要往下跑，t 早早就超过水平距离）。
+      // rayAABB 对 d.y=0 有专门分支，退化成「眼睛高度是否落在箱子的竖直区间内」。
       const origin = { x: p.pos.x, y: p.pos.y + PLAYER_EYE, z: p.pos.z };
+      const rayDir = { x: fx, y: 0, z: fz };
       let blocked = false;
       for (const box of BOXES) {
         const min = { x: box.x - box.w / 2, y: 0, z: box.z - box.d / 2 };
         const max = { x: box.x + box.w / 2, y: box.h, z: box.z + box.d / 2 };
-        const t = rayAABB(origin, dir, min, max);
+        const t = rayAABB(origin, rayDir, min, max);
         if (t !== null && t < dist) { blocked = true; break; }
       }
       if (blocked) continue;
 
       hitPlayers.push(q.id);
-      this.damage(q, p, wpn, wpn.damage);
+      this.damage(q, p, wpn, amount);
     }
 
     this.broadcast({
       t: 'melee',
       id: p.id,
       weaponId: wpn.id,
+      stage,
       hitPlayers,
     });
   }
