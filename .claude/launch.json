@@ -4,7 +4,7 @@
     {
       "name": "static",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "8123"],
+      "runtimeArgs": [".claude/capture_server.py", "8123"],
       "port": 8123,
       "url": "http://localhost:8123"
     }
