@@ -394,6 +394,9 @@ var leaderboardList = document.getElementById('leaderboardList');
   };
 
   var remotePlayers = new Map();
+  // 练枪靶子。位置/朝向/血量全由服务端给（见 server.js 的 DUMMY_SPOTS），
+  // 这边只负责建模型和放反馈——**不**自己造判定，否则练出来的手感和实战对不上。
+  var dummies = new Map();
   var socket = null;
   var gameStarted = false;
   var pointerLocked = false;
@@ -443,6 +446,7 @@ var smokeParticles = [];
   // 进度必须按比例走完，1.3 秒的手枪和 3.8 秒的机枪才会是同一套动作节奏。
   var reloadAnimT = 0, reloadAnimDur = 0, reloadAnimId = '';
   var reloadSndStage = 0;     // 换弹音效已经播到第几段
+  var reloadTimer = 0;        // startReload 的上膛完成定时器，切枪/重生要能取消它
 
   // ----------------------------------------------------------
   // Three.js 初始化
@@ -2938,7 +2942,9 @@ var smokeParticles = [];
   // ----------------------------------------------------------
   // 远端玩家模型（美化版）
   // ----------------------------------------------------------
-  function makeNameSprite(name) {
+  // color 可选：默认白色（玩家）。练枪靶子传橙色——头顶一排浮字的时候，
+  // 靠颜色一眼分清哪个是真人、哪个是靶子，比去读字快。
+  function makeNameSprite(name, color) {
     var c = document.createElement('canvas');
     c.width = 256; c.height = 64;
     var ctx = c.getContext('2d');
@@ -2953,7 +2959,7 @@ var smokeParticles = [];
     ctx.font = 'bold 28px "Microsoft YaHei", "PingFang SC", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = color || '#ffffff';
     ctx.fillText(name, 128, 34);
     var tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
@@ -4656,6 +4662,8 @@ var smokeParticles = [];
         local.deaths = 0;
         lastHp = local.hp;
         deathOverlay.style.display = 'none';
+        // 靶子只在 joined 里下发一次（位置和朝向是服务端常量，不进快照）
+        spawnDummies(msg.dummies);
         applyWeaponVisibility();
         updateHUD();
         break;
@@ -4702,6 +4710,12 @@ var smokeParticles = [];
         break;
       case 'respawn':
         handleRespawn(msg);
+        break;
+      case 'dummyHit':
+        handleDummyHit(msg);
+        break;
+      case 'dummyReset':
+        handleDummyReset(msg);
         break;
       case 'leave':
         removeRemote(msg.id);
@@ -4792,7 +4806,11 @@ var smokeParticles = [];
   function handleFire(msg) {
     var isLocal = msg.id === local.id;
     if (isLocal) {
-      if (msg.hitPlayers && msg.hitPlayers.length > 0) {
+      // 打靶子和打人给完全一样的命中反馈（准星、音效、部位提示）。
+      // 少一种反馈，练枪练出来的手感就和实战差一截——那这排靶子就白摆了。
+      var hitAny = (msg.hitPlayers && msg.hitPlayers.length > 0) ||
+                   (msg.hitDummies && msg.hitDummies.length > 0);
+      if (hitAny) {
         var zone = bestHitZone(msg.tracers);
         showHitmarker(zone);
         playHitSound(zone === 'head');
@@ -4808,7 +4826,7 @@ var smokeParticles = [];
           new THREE.Vector3(tr.end.x, tr.end.y, tr.end.z),
           0.06
         );
-        if (tr.hitPlayer) {
+        if (tr.hitPlayer || tr.hitDummy) {
           // 爆头的血雾更亮更多：旁观者也该看得出刚才那一枪打的是头
           var head = tr.hitZone === 'head';
           addImpact(new THREE.Vector3(tr.end.x, tr.end.y, tr.end.z), head ? 0xff2222 : 0xff6655, head ? 18 : 10, false);
@@ -4824,7 +4842,8 @@ var smokeParticles = [];
   function handleMeleeEvent(msg) {
     var isLocal = msg.id === local.id;
     if (isLocal) {
-      if (msg.hitPlayers && msg.hitPlayers.length > 0) {
+      if ((msg.hitPlayers && msg.hitPlayers.length > 0) ||
+          (msg.hitDummies && msg.hitDummies.length > 0)) {
         showHitmarker();
         playHitSound();
       }
@@ -4860,7 +4879,7 @@ var smokeParticles = [];
         local.ranged = local.primary;
         local.ammo = local.ammoPrimary;
         local.reserve = local.reservePrimary;
-      local.reloading = false;
+      cancelReload();          // 换弹途中阵亡：连定时器一起作废，别让它复活后补弹
       // 重生必须把「手上这把武器」的全部状态归零，而不只是作废换弹动画。
       //
       // 这里原来只有 cancelReloadAnim()，于是持刀阵亡再重生会出一个错乱状态：
@@ -4914,6 +4933,527 @@ var smokeParticles = [];
     if (!r) return;
     scene.remove(r.group);
     remotePlayers.delete(id);
+  }
+
+  // ----------------------------------------------------------
+  // 练枪靶子
+  //
+  // 服务端实体（server.js 的 DUMMY_SPOTS / damageDummy）。客户端只做三件事：
+  // 建模型、放命中反馈、按广播倒地和复位。判定一行都不在这边——靶子走的是
+  // 和真人**同一套** raycastPlayerZones，练出来的手感才和实战对得上。
+  //
+  // 造型照参考照片：黑色紧身短袖 T、米白色束脚运动裤、黑色短发（顶部碎发、
+  // 两侧推短）、赤手拳击站架。
+  //
+  // 站架收得紧（双肘贴肋、拳头到脸侧）不是风格选择，是**判定倒逼**的：
+  // 服务端的躯干柱半径只有 0.34、手臂柱固定在体侧 ox=±0.26。前手一旦按标准
+  // 架式伸到身前 0.35m 外，视觉上明明打中了、判定上却是空枪——练枪的靶子
+  // 出这种事最坏。收成紧护架之后，肩→肘→拳整条手臂都落在躯干柱里，打哪都算数。
+  // 以后再改姿势，先量一遍这件事，别只看像不像。
+  // ----------------------------------------------------------
+  var DUMMY_BLADE = -0.26;      // 上身侧转：负角＝左肩朝前（与 BLADE 同约定）
+  var DUMMY_HIT_ANIM = 0.16;    // 挨一发之后的后仰时长
+  var DUMMY_TAG_DIST = 45;      // 名牌/血条的显示距离：十个靶子排成一排，
+                                // 全程挂着标签的话半个地图边缘都是浮字
+  var DUMMY_FALL_MAX = 1.45;    // 倒地角（≈83°，几乎躺平）
+  // 倒地时腿要**伸直**。之前是整个人当刚体绕后脚跟翻过去，"最低点贴地"这条
+  // 也验过——但验错了：最低点就是支点本身，等于只证明了支点没陷进去。
+  // 实际渲染出来是一根 83° 的斜板拿后脚跟当撑杆，躯干悬空 33cm、头悬空 39cm。
+  // 根子在拳击站架的后脚落在 z=+0.30：刚体往后翻，这只脚必然变成撑杆。
+  // 所以倒地过程里把髋/膝/踝插值到"平躺伸腿"，人才真躺在地上。
+  // 这两个角是按躺平后大腿要水平反解的：大腿局部朝 -y，绕 x 转 h 之后
+  // 世界 y 分量 = -cos(h)cos(FALL) + sin(h)sin(FALL)，令其为 0 得 h = FALL - π/2 ≈ 0.12。
+  var DUMMY_DOWN_HIP = 0.12;
+  var DUMMY_DOWN_KNEE = -0.05;  // 留一点余量，完全绷直的膝盖比躺着的人更像根棍子
+  var DUMMY_DOWN_FOOT = 0.34;   // 脚尖跟着躺平（不转的话鞋底会朝天翘着）
+  // 每个角度需要整体抬起多少才刚好贴地：拿真几何量出来的表（见 measureDummyFall）。
+  // 十个靶子几何完全一样，所以只量第一个。
+  var dummyFallLift = null;
+  var dummyMats = null;
+  var dummyGeo = {};
+  var _dq = new THREE.Quaternion();
+
+  // 十个靶子长得一模一样，所以**共用一套材质**（十份材质在画面上没有任何区别，
+  // 只是白白多十份 draw state）。代价是不能单独把某一个调透明——所以倒地表现
+  // 走的是「整个人后仰倒下」，不是玩家那种降 opacity。
+  function getDummyMats() {
+    if (dummyMats) return dummyMats;
+    dummyMats = {
+      // 不用纯黑：ACES 下 0x000000 的紧身衣是一整片没有明暗的剪影，
+      // 抬到 0x1c1f24 才看得出布料的转折。
+      tee: new THREE.MeshStandardMaterial({ color: 0x1c1f24, roughness: 0.87, metalness: 0.03 }),
+      // 领口/袖口要比衣身亮一档，否则黑衣服的边缘线在暗处整个消失
+      teeHi: new THREE.MeshStandardMaterial({ color: 0x2f343b, roughness: 0.82, metalness: 0.03 }),
+      pants: new THREE.MeshStandardMaterial({ color: 0xdcd5c1, roughness: 0.93, metalness: 0.0 }),
+      // 腰头/裤脚束口，比裤身暗一档才看得出是"一圈"而不是同色的一段
+      band: new THREE.MeshStandardMaterial({ color: 0xbcb49e, roughness: 0.9, metalness: 0.0 }),
+      skin: new THREE.MeshStandardMaterial({ color: 0xd9a878, roughness: 0.84 }),
+      hair: new THREE.MeshStandardMaterial({ color: 0x14100e, roughness: 0.66 }),
+      // 两侧推短的鬓角：比头顶**亮**一档，这一档明度差就是"渐变"读得出来的全部原因
+      fade: new THREE.MeshStandardMaterial({ color: 0x2b241f, roughness: 0.8 }),
+      brow: new THREE.MeshStandardMaterial({ color: 0x1a1512, roughness: 0.8 }),
+      eye: new THREE.MeshStandardMaterial({ color: 0x241c16, roughness: 0.42 }),
+      shoe: new THREE.MeshStandardMaterial({ color: 0xe9e6df, roughness: 0.72 }),
+      sole: new THREE.MeshStandardMaterial({ color: 0x2b2b2e, roughness: 0.86 }),
+      // 脚下的标记环：远处一眼能认出"那一排是靶子不是人"
+      ring: new THREE.MeshStandardMaterial({ color: 0xc8781e, emissive: 0x4a2606, roughness: 0.6, metalness: 0.0 })
+    };
+    return dummyMats;
+  }
+
+  // 胶囊按尺寸缓存：十个靶子各建一遍的话是一百多个一模一样的 geometry。
+  // （rBox 走的是 GEO_CACHE，本来就共用，不用管。）
+  function dcap(r, len, capSeg, radSeg) {
+    var cs = capSeg || 6, rs = radSeg || 14;
+    var k = r.toFixed(3) + '_' + len.toFixed(3) + '_' + cs + '_' + rs;
+    if (!dummyGeo[k]) dummyGeo[k] = new THREE.CapsuleGeometry(r, Math.max(0.005, len), cs, rs);
+    return dummyGeo[k];
+  }
+  // 倒角盒（和人物模型里的 P 同一套理由：硬边盒在这套光照下只有一片死平光）
+  function dP(w, h, d, mat, x, y, z, axis) {
+    var rr = Math.min(0.030, Math.min(w, Math.min(h, d)) * 0.26);
+    return rBox(w, h, d, rr, mat, x, y, z, axis || 'z');
+  }
+  // 薄贴片（眉毛/眼/嘴）：没有厚度可倒角，硬边盒
+  function dF(w, h, d, mat, x, y, z) {
+    var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(x, y, z); m.castShadow = true; return m;
+  }
+  // 绕一整圈的束带（腰头、裤脚束口、领口）。只在侧面凸一点的贴片在这套光照下
+  // 读不出来，绕整圈才能啃出一条会亮的边。zk 把前后压扁——躯干是扁的，
+  // 正圆的环会在身前身后各鼓出好几厘米。
+  function dRing(r, tube, mat, y, z, zk, seg) {
+    var m = new THREE.Mesh(new THREE.TorusGeometry(r, tube, 6, seg || 18), mat);
+    m.rotation.x = Math.PI / 2;
+    m.scale.set(1, zk || 1, 1);
+    m.position.set(0, y, z || 0);
+    m.castShadow = true;
+    return m;
+  }
+  // 绕 y 转 t：把身体正朝向量的点换算到侧转过的 chest 局部坐标（t 传 -DUMMY_BLADE）。
+  // 和 bladeSpace 同一件事，只是那个把 BLADE 写死了，这边角度不一样。
+  function dRotY(p, t) {
+    var c = Math.cos(t), s = Math.sin(t);
+    return [p[0] * c + p[2] * s, p[1], -p[0] * s + p[2] * c];
+  }
+
+  // 赤手握拳。靶子没有手套（参考图是赤手），指节要能看出是攥着的，
+  // 不然末端就是一截圆管，像被截肢。
+  function makeDummyFist(mirror) {
+    var M = getDummyMats();
+    var g = new THREE.Group();
+    g.add(dP(0.082, 0.088, 0.070, M.skin, 0, 0, 0));            // 掌
+    for (var i = 0; i < 4; i++) {                               // 四指指节
+      g.add(dP(0.019, 0.030, 0.062, M.skin, -0.028 + i * 0.019, 0.028, -0.012));
+    }
+    var th = dP(0.026, 0.062, 0.030, M.skin, mirror ? -0.040 : 0.040, -0.006, -0.024);
+    th.rotation.z = mirror ? 0.5 : -0.5;                        // 拇指压在指节外侧
+    g.add(th);
+    return g;
+  }
+
+  // 一具靶子的完整模型。朝向约定和玩家一致：**正面朝 -z**。
+  function buildDummyModel() {
+    var M = getDummyMats();
+    var group = new THREE.Group();
+    var bodyGroup = new THREE.Group();          // 倒地时转这一层（脚下的标记环要留在原地）
+    group.add(bodyGroup);
+
+    // ---- 下半身（拳击站架：左脚在前、右脚后撇外八，双膝微屈）----
+    // 髋高 0.90 照玩家模型定（服务端的腿部柱 y 0.02~0.98 就是按这个划的）。
+    // 膝盖要弯，脚又必须踩在地上，所以两段之和 (0.85) 要比髋到踝的直线距离
+    // (~0.82) 长一点：不留这点余量，"屈膝"只能靠把整个人往下压，
+    // 头会跟着掉出服务端那颗头部判定球。
+    var HIP_Y = 0.90, THIGH = 0.42, SHIN = 0.43, ANKLE_Y = 0.085;
+    function makeLeg(hipX, footZ, footYaw, splay) {
+      var leg = new THREE.Group();
+      leg.position.set(hipX, HIP_Y, 0);
+      // 外八站宽：绕 z 转一个固定角，踝就往外挪 (HIP_Y-ANKLE_Y)*tan(splay)。
+      // 绕 z 转不改变 z 分量，所以下面矢状面那套解法照旧成立，
+      // 只要把竖直落差按 1/cos 放大回来。
+      var ay = (HIP_Y - ANKLE_Y) / Math.cos(splay);
+      var d = Math.sqrt(ay * ay + footZ * footZ);
+      // 矢状面两段反解：给定踝的落点，解出大腿倾角和屈膝角。手写角度的话，
+      // 脚要么陷进地里要么悬空，而且改一次腿长就得重新试一遍。
+      var knee = Math.PI - Math.acos(clamp((THIGH * THIGH + SHIN * SHIN - d * d) / (2 * THIGH * SHIN), -1, 1));
+      var a = Math.acos(clamp((THIGH * THIGH + d * d - SHIN * SHIN) / (2 * THIGH * d), -1, 1));
+      // 绕 x 转正角＝肢体往前（-z）摆：(0,-1,0) → (0,-cos,-sin)
+      var t1 = Math.asin(clamp(-footZ / d, -1, 1)) + a;
+      leg.rotation.z = splay;
+      leg.rotation.x = t1;
+
+      // 大腿/小腿：胶囊总长 = len + 2r，所以 len 要按「段长 - 两个半径」给，
+      // 否则一段一段地往下越接越长，膝盖会顶出裤子。
+      var thigh = new THREE.Mesh(dcap(0.100, THIGH - 0.20), M.pants);
+      thigh.position.y = -THIGH / 2; thigh.castShadow = true; leg.add(thigh);
+
+      var kneeJoint = new THREE.Group();
+      kneeJoint.position.y = -THIGH;
+      kneeJoint.rotation.x = -knee;
+      leg.add(kneeJoint);
+      // 膝盖：大腿 r0.100 直接接小腿 r0.084，转折处是一个圆头突然缩一截，
+      // 看着像玩偶的球窝关节。补一颗略大于小腿的球把这段过渡吃掉。
+      var kneeCap = new THREE.Mesh(new THREE.SphereGeometry(0.094, 12, 10), M.pants);
+      kneeCap.scale.set(0.96, 1, 1.02); kneeCap.castShadow = true;
+      kneeJoint.add(kneeCap);
+      var shin = new THREE.Mesh(dcap(0.084, SHIN - 0.168), M.pants);
+      shin.position.y = -SHIN / 2; shin.castShadow = true; kneeJoint.add(shin);
+      // 裤脚束口（束脚裤的标志，参考图裤腿在脚踝上方收住）
+      kneeJoint.add(dRing(0.086, 0.017, M.band, -SHIN + 0.085, 0, 1.0, 16));
+
+      // 脚：父级已经转了 (t1 - knee)，这里转回来鞋底才是水平的，
+      // 否则整只鞋斜着插进地里。（splay 那 5° 的侧倾没抵消——绕 z 的旋转
+      // 在父级最外层，从里面抵不掉，而 0.09rad 在 0.11 宽的鞋上是 5mm，看不出来。）
+      var foot = new THREE.Group();
+      foot.position.y = -SHIN;
+      foot.rotation.x = knee - t1;
+      foot.rotation.y = footYaw;
+      kneeJoint.add(foot);
+      // 白色运动鞋。鞋底底面要正好落在 y=0：rBox 的倒角会让上下各外扩一个
+      // bevelSize(7mm)，按标称尺寸摆会整只脚陷进地里。
+      foot.add(dP(0.116, 0.032, 0.285, M.sole, 0, -ANKLE_Y + 0.023, -0.030));
+      foot.add(dP(0.110, 0.078, 0.245, M.shoe, 0, -0.012, -0.022));
+      foot.add(dP(0.098, 0.056, 0.100, M.shoe, 0, -0.024, -0.128));   // 鞋头包头
+      foot.add(dP(0.104, 0.056, 0.105, M.shoe, 0, 0.030, 0.042));     // 鞋帮后跟
+      // 倒地要把腿插值成平躺，所以把三个关节和它们的站立角一起带出去
+      leg.kneeJoint = kneeJoint;
+      leg.footJoint = foot;
+      leg.stand = { hip: t1, knee: -knee, foot: knee - t1 };
+      return leg;
+    }
+    // 左脚在前（与左肩朝前的侧身一致），右脚后撇。footYaw 为负＝脚尖转向模型右侧，
+    // 正是正架（orthodox）双脚该指的方向。
+    var leftLeg = makeLeg(-0.115, -0.145, -0.24, -0.085);
+    var rightLeg = makeLeg(0.115, 0.170, -0.62, 0.085);
+
+    // 骨盆/胯（跟着腿，不进 chest：chest 要侧转，转了胯就从腿上甩出去）
+    // 原来是个倒角盒，渲出来是一只硬邦邦的白桶：四条竖棱在胯这个圆的地方特别假，
+    // 而且盒宽必须压过上身胶囊的 0.181，于是在裤子侧面顶出一道台阶。
+    // 换成上宽下窄的圆台再按 0.66 压扁前后：顶圈 0.366 宽（仍然盖得住胶囊），
+    // 往下收到 0.30 收成裤裆，侧面是连续的一条弧线，台阶和竖棱一起没了。
+    // 顶圈 0.170 是**为了藏住自己的顶盖**：圆台的上端面是一个朝天的圆盘，
+    // 正对阳光，比任何竖面都亮，只要露出两毫米就是腰上一道刺眼的白圈（渲过）。
+    // 它必须整个缩进 T 恤下摆的内侧（下摆底圈在这一高度是 x 0.188 / z 0.119）。
+    var pelvis = new THREE.Mesh(new THREE.CylinderGeometry(0.170, 0.150, 0.235, 20), M.pants);
+    pelvis.scale.set(1.0, 1, 0.66);
+    pelvis.position.y = 0.965; pelvis.castShadow = true;
+    // 松紧腰头。露在 T 恤下摆和裤身之间那一截才是"运动裤"的读法。
+    // 半径要比圆台在这一高度的截面（0.174）大，不然整圈埋进裤子里。
+    var waist = dRing(0.180, 0.018, M.band, 1.020, 0, 0.66, 20);
+
+    // ---- 上身（黑色紧身短袖 T）----
+    var chest = new THREE.Group();
+    chest.rotation.y = DUMMY_BLADE;
+    // 躯干比玩家瘦一圈：那边的粗细是算上防弹背心和胸挂的，这边只有一件贴身 T。
+    // 压扁 0.62 是照真人胸厚/胸宽（约 0.24/0.38）来的，不压就是个圆桶。
+    var torso = new THREE.Mesh(dcap(0.185, 0.30, 7, 16), M.tee);
+    torso.scale.set(0.98, 1, 0.62); torso.position.y = 1.27; torso.castShadow = true;
+    chest.add(torso);
+    // 下摆。原来是一块 0.399×0.260 的倒角盒，比躯干在这一段的截面
+    // （x 半宽 0.180 / z 半厚 0.114）宽出两厘米——侧面看是一块黑托盘横在腰上，
+    // 不是衣摆。换成微喇的圆台再按同一个 0.62 压扁：顶圈与胶囊齐平，
+    // 底圈只外扩 1cm 压在裤腰上，正好是 T 恤下摆盖住裤头的那道边。
+    var hem = new THREE.Mesh(new THREE.CylinderGeometry(0.187, 0.196, 0.082, 20), M.tee);
+    hem.scale.set(0.98, 1, 0.62); hem.position.y = 1.086; hem.castShadow = true;
+    chest.add(hem);
+    // 下摆底口的卷边。圆柱的下沿是一条硬棱，从侧面看是一片黑色的尖角搭在胯上；
+    // 沿着底口套一圈同色细环，棱就变成卷边（zk 按底口的椭圆比 0.1215/0.192 给）。
+    chest.add(dRing(0.192, 0.011, M.tee, 1.045, 0, 0.633, 20));
+    // 圆领口。半径必须超过胶囊在颈根那一圈的截面（1.575 处 x 半宽 0.099），
+    // 照 0.079 给的话整圈埋在肩里看不见——圆环只有骑在表面上才读得出是领子。
+    // 管径 0.014 太粗，渲出来是套在脖子上的护颈；0.009 才是一道领边。
+    chest.add(dRing(0.105, 0.009, M.teeHi, 1.570, 0, 0.70, 18));
+    // 胸/背的转折。紧身衣看得出胸肌和斜方肌，否则整个上身就是一个素胶囊。
+    // 别用贴片盒：躯干截面是椭圆，一块平板的两个外角会翘出表面四五厘米，
+    // 渲出来是绑在胸前的装甲板（前一版就是这样）。压扁的球才处处贴着弧面，
+    // 凸出量从中心的 1.4cm 平滑收到边缘的 0。
+    function dLump(rr, sx, sy, sz, x, y, z, mat) {
+      var m = new THREE.Mesh(new THREE.SphereGeometry(rr, 12, 10), mat);
+      m.scale.set(sx, sy, sz); m.position.set(x, y, z); m.castShadow = true;
+      return m;
+    }
+    chest.add(dLump(0.078, 1.0, 0.80, 0.52, -0.070, 1.392, -0.074, M.tee));   // 左胸
+    chest.add(dLump(0.078, 1.0, 0.80, 0.52, 0.070, 1.392, -0.074, M.tee));    // 右胸
+    chest.add(dLump(0.105, 1.0, 0.62, 0.46, 0, 1.470, 0.070, M.tee));         // 上背/斜方肌
+
+    // ---- 头（含五官与短发）----
+    var headGroup = new THREE.Group();
+    var neck = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.070, 0.13, 14), M.skin);
+    neck.position.y = 1.575; neck.castShadow = true;
+    headGroup.add(neck);
+    var head = dP(0.155, 0.190, 0.175, M.skin, 0, 1.700, 0);
+    headGroup.add(head);
+    headGroup.add(dP(0.118, 0.062, 0.150, M.skin, 0, 1.628, -0.008));   // 下颌收窄
+    // 耳。位置按五官反推：真人耳廓上沿约与眼同高、下沿到嘴，也就是 1.65~1.71。
+    // 之前给到 1.692±0.033（上沿越过眉毛）并且和下面那两块鬓角完全重叠，
+    // 渲出来是黑鬓角上贴了一块亮肤色方片——特写下第一眼就是这个东西不对。
+    headGroup.add(dP(0.020, 0.046, 0.036, M.skin, -0.081, 1.678, 0.014));
+    headGroup.add(dP(0.020, 0.046, 0.036, M.skin, 0.081, 1.678, 0.014));
+    // 五官。低多边形做脸只要多做就变橡皮泥，够用的量是：眉、眼、鼻、嘴。
+    // z 都压在脸的前平面（-0.0875）上，凸出 7mm——凹进去就成了贴在脸上的色块。
+    headGroup.add(dF(0.046, 0.011, 0.012, M.brow, -0.038, 1.727, -0.090));
+    headGroup.add(dF(0.046, 0.011, 0.012, M.brow, 0.038, 1.727, -0.090));
+    headGroup.add(dF(0.036, 0.015, 0.010, M.eye, -0.038, 1.706, -0.090));
+    headGroup.add(dF(0.036, 0.015, 0.010, M.eye, 0.038, 1.706, -0.090));
+    headGroup.add(dP(0.030, 0.052, 0.040, M.skin, 0, 1.684, -0.093));   // 鼻
+    headGroup.add(dF(0.044, 0.010, 0.010, M.brow, 0, 1.650, -0.089));   // 嘴
+    // 短发：顶盖 + 后脑到发际 + 两侧推短（更亮）+ 顶上几簇碎发。
+    // 顶盖下沿卡在发际线 1.729（眉毛 1.727 之上 2mm），再往下就盖住眉眼变成头盔了。
+    headGroup.add(dP(0.170, 0.072, 0.192, M.hair, 0, 1.772, 0.002));
+    // 后脑那块原来给到 z 0.048±0.05，前沿压到 z=-0.002，正好把耳朵所在的
+    // z≈0 那一段整个包住，于是耳朵成了从一团黑里横向戳出来的一块亮方片。
+    // 往后挪到 0.030 起（耳朵后沿 0.032）：两者只擦一下，互不遮挡。
+    headGroup.add(dP(0.162, 0.135, 0.076, M.hair, 0, 1.706, 0.068));
+    // 两侧推短的鬓角只该在耳朵**上方**（真人的渐变就是从鬓角往上推的）。
+    // 之前 1.712±0.053 正好压在耳朵上，把耳朵整块吃掉了。
+    headGroup.add(dP(0.015, 0.062, 0.150, M.fade, -0.080, 1.744, 0.010));
+    headGroup.add(dP(0.015, 0.062, 0.150, M.fade, 0.080, 1.744, 0.010));
+    // 顶上的碎发。三簇分开摆是三个鼓包（像顶了朵蘑菇），改成一条压扁的横向
+    // 起伏：前低后高、左右错开，远处只看得出"头顶不是个光滑的盖"，正是要的量。
+    var tuft = [[-0.052, 0.030, 0.20], [-0.004, -0.014, -0.10], [0.050, 0.036, 0.26]];
+    for (var tf = 0; tf < tuft.length; tf++) {
+      var sp = dP(0.062, 0.024, 0.070, M.hair, tuft[tf][0], 1.816, tuft[tf][1]);
+      sp.rotation.z = tuft[tf][2];
+      headGroup.add(sp);
+    }
+
+    // ---- 手臂（护架：肘贴肋、拳到脸侧；短袖露小臂）----
+    function makeArm(side) {
+      var arm = new THREE.Group();
+      arm.position.set(side * 0.180, 1.445, 0);
+      // 上臂：肩到肘一段。上半截套短袖，下半截是裸的——参考图就是这样，
+      // 而且这条袖口线是"穿着一件 T 恤"最直接的读法。
+      var upper = new THREE.Mesh(dcap(0.058, ARM_L1 - 0.116), M.skin);
+      upper.position.y = -ARM_L1 / 2; upper.castShadow = true; arm.add(upper);
+      // 袖子用**圆柱**不是胶囊：短袖需要一条齐的切口，胶囊那个圆头收到尖了，
+      // 袖口的圆环就箍在一个半径趋零的地方，等于箍在空气里。
+      var sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.072, 0.066, 0.16, 14), M.tee);
+      sleeve.position.y = -0.085; sleeve.castShadow = true; arm.add(sleeve);
+      var sleeveHem = new THREE.Mesh(new THREE.TorusGeometry(0.066, 0.009, 6, 16), M.teeHi);
+      sleeveHem.rotation.x = Math.PI / 2; sleeveHem.position.y = -0.163; arm.add(sleeveHem);
+      // 三角肌：肩窝处不补一块，胶囊躯干和手臂之间会露出一条缝。
+      // 它同时盖住袖子上端那个圆柱切口。
+      var delt = new THREE.Mesh(new THREE.SphereGeometry(0.072, 12, 10), M.tee);
+      delt.scale.set(1.0, 0.86, 0.90); delt.position.set(side * 0.008, -0.010, 0);
+      delt.castShadow = true; arm.add(delt);
+
+      var fore = new THREE.Group();                 // 肘关节
+      fore.position.set(0, -ARM_L1, 0);
+      arm.add(fore);
+      var foreMesh = new THREE.Mesh(dcap(0.050, ARM_L2 - 0.145), M.skin);
+      foreMesh.position.y = -(ARM_L2 - 0.045) / 2; foreMesh.castShadow = true; fore.add(foreMesh);
+      // 肘头用球而不是盒：这个护架屈肘接近 40°，两截胶囊的圆头在弯的外侧
+      // 会豁开一道缝，球从任何角度都填得住，盒子只在正对某一面时填得住。
+      var elbow = new THREE.Mesh(new THREE.SphereGeometry(0.056, 12, 10), M.skin);
+      elbow.castShadow = true; fore.add(elbow);
+      var fist = makeDummyFist(side < 0);
+      // makeDummyFist 的手腕朝 +y、指节朝 -z；小臂沿局部 -y 往下，
+      // 所以直接挂在末端即可，指节自然朝前。
+      fist.position.y = -ARM_L2;
+      fist.rotation.x = -0.35;                      // 拳面略向上翻，像攥着的样子
+      fist.traverse(function (o) { if (o.isMesh) o.castShadow = true; });
+      fore.add(fist);
+
+      arm.foreJoint = fore;
+      return arm;
+    }
+    var leftArm = makeArm(-1);
+    var rightArm = makeArm(1);
+    chest.add(leftArm, rightArm);
+
+    // 拳头的落点。坐标按**身体正朝向**给（好核对"离体轴多远"这件事），
+    // 再换算到侧转过的 chest 里去——不换算就等于把目标点也一起转了。
+    // 两个落点连同拳头半径都压在体轴 0.34 以内，见文件头那段说明。
+    // 后手比前手高（到脸侧）但不敢再高：1.48+拳半径已经贴到躯干柱顶 1.56，
+    // 再抬就有一小片拳头既不在躯干柱里、也进不了头部球（那颗球在 1.55 高度上
+    // 只覆盖离轴 0.13 以内），成了打不中的死角。
+    //
+    // pole 决定肘往哪甩。x 只给 0.18：给到 0.35 时右肘会飞到离轴 0.32，
+    // 离躯干柱边缘只剩 1.8cm，稍微改点姿势就出界。往前压 -0.10 是让肘贴着肋骨，
+    // 也正是护架该有的样子。左右两侧各自转一遍，不要拿右边的结果去取负——
+    // 镜像和旋转不交换，取负出来的那个 pole 前后偏了 3cm。
+    var poleR = dRotY([0.18, -1, -0.10], -DUMMY_BLADE);
+    var poleL = dRotY([-0.18, -1, -0.10], -DUMMY_BLADE);
+    var lf = dRotY([-0.155, 1.435, -0.225], -DUMMY_BLADE);
+    var rf = dRotY([0.150, 1.480, -0.205], -DUMMY_BLADE);
+    solveArm(leftArm, lf[0], lf[1], lf[2], poleL[0], poleL[1], poleL[2]);
+    solveArm(rightArm, rf[0], rf[1], rf[2], poleR[0], poleR[1], poleR[2]);
+
+    bodyGroup.add(pelvis, waist, leftLeg, rightLeg, chest, headGroup);
+
+    // 脚下的标记环：远处一眼分清"那一排是靶子不是人"
+    var ring = new THREE.Mesh(new THREE.RingGeometry(0.44, 0.54, 26), M.ring);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.02;
+    group.add(ring);
+
+    var hb = createHealthBar();
+    hb.group.position.y = 2.15;      // 和玩家同高，一排看过去不会高低错落
+    group.add(hb.group);
+
+    scene.add(group);
+    var rec = {
+      group: group, bodyGroup: bodyGroup, chest: chest, legs: [leftLeg, rightLeg],
+      healthFill: hb.fill, healthGroup: hb.group, nameSprite: null,
+      hp: 150, maxHp: 150, alive: true,
+      fall: 0, hitAnim: 0, deadAt: 0, resetAt: 0
+    };
+    if (!dummyFallLift) measureDummyFall(rec);
+    applyDummyFall(rec, 0);
+    return rec;
+  }
+
+  // 倒地姿态：整个人绕两脚之间的地面点后翻，同时把腿插值成平躺，
+  // 再整体抬 lift 让最低点正好贴地。三件事必须一起做，少一件就是悬空或陷地。
+  function applyDummyFall(d, th) {
+    var k = clamp(th / DUMMY_FALL_MAX, 0, 1);
+    for (var i = 0; i < d.legs.length; i++) {
+      var lg = d.legs[i], st = lg.stand;
+      lg.rotation.x = st.hip + (DUMMY_DOWN_HIP - st.hip) * k;
+      lg.kneeJoint.rotation.x = st.knee + (DUMMY_DOWN_KNEE - st.knee) * k;
+      lg.footJoint.rotation.x = st.foot + (DUMMY_DOWN_FOOT - st.foot) * k;
+    }
+    d.bodyGroup.rotation.x = th;                 // 正角＝往 +z 倒＝朝后倒（正面朝 -z）
+    d.bodyGroup.position.y = dummyLift(k);
+  }
+
+  // 抬升量的线性插值。表是按 k=fall/FALL_MAX 均匀采样的。
+  function dummyLift(k) {
+    if (!dummyFallLift) return 0;
+    var n = dummyFallLift.length - 1;
+    var u = clamp(k, 0, 1) * n, i0 = Math.floor(u), i1 = Math.min(n, i0 + 1);
+    return dummyFallLift[i0] + (dummyFallLift[i1] - dummyFallLift[i0]) * (u - i0);
+  }
+
+  // 量出每个倒地角度下"整具身体的最低点在哪"，取反就是要抬多少。
+  // 用真几何（Box3.setFromObject 会把每个 mesh 的包围盒按世界矩阵摊开），
+  // 不用解析式：姿态是三个关节插值出来的，最低点在倒地过程中会从后脚跟
+  // 换到裤腿、再换到后背，写不出封闭解，量一遍最省事也最不会错。
+  function measureDummyFall(rec) {
+    var steps = 11, tab = [], box = new THREE.Box3();
+    var y0 = rec.group.position.y;
+    for (var i = 0; i < steps; i++) {
+      var k = i / (steps - 1);
+      applyDummyFallRaw(rec, k * DUMMY_FALL_MAX, k);
+      rec.group.updateMatrixWorld(true);
+      box.setFromObject(rec.bodyGroup);
+      tab.push(Math.max(0, y0 - box.min.y));
+    }
+    dummyFallLift = tab;
+  }
+  // measureDummyFall 专用：摆姿势但不加抬升（抬升正是要量的东西）
+  function applyDummyFallRaw(d, th, k) {
+    for (var i = 0; i < d.legs.length; i++) {
+      var lg = d.legs[i], st = lg.stand;
+      lg.rotation.x = st.hip + (DUMMY_DOWN_HIP - st.hip) * k;
+      lg.kneeJoint.rotation.x = st.knee + (DUMMY_DOWN_KNEE - st.knee) * k;
+      lg.footJoint.rotation.x = st.foot + (DUMMY_DOWN_FOOT - st.foot) * k;
+    }
+    d.bodyGroup.rotation.x = th;
+    d.bodyGroup.position.y = 0;
+  }
+
+  // 倒地→复位的计时。服务端在 dummyHit 里给的是**剩余**时长
+  // （中途进来的人拿到的也是剩余量），所以这里就以"收到的这一刻"当起点：
+  // 进度条不一定从真正被打倒的时刻算起，但走满的那一刻一定是站起来的那一刻。
+  function startDummyReset(d, ms) {
+    d.deadAt = Date.now();
+    d.resetAt = d.deadAt + Math.max(1, ms || 1);
+  }
+
+  function clearDummies() {
+    dummies.forEach(function (d) { scene.remove(d.group); });
+    dummies.clear();
+  }
+
+  // 服务端在 joined 里一次性给出全部靶子（位置和朝向是常量，血量/是否躺着不是）。
+  // 先清一遍：断线重进会再来一份，不清就会在同一个地方叠两层靶子。
+  function spawnDummies(list) {
+    clearDummies();
+    if (!list || !list.length) return;
+    for (var i = 0; i < list.length; i++) {
+      var w = list[i];
+      var d = buildDummyModel();
+      d.id = w.id;
+      d.group.position.set(w.pos.x, w.pos.y || 0, w.pos.z);
+      d.group.rotation.y = w.yaw || 0;
+      d.hp = (typeof w.hp === 'number') ? w.hp : 150;
+      d.maxHp = w.maxHp || 150;
+      d.alive = w.alive !== false;
+      d.fall = d.alive ? 0 : DUMMY_FALL_MAX;
+      applyDummyFall(d, d.fall);        // 半路进来时已经躺着的那几个，第一帧就得是躺姿
+      if (!d.alive) startDummyReset(d, w.resetIn);
+      // 编号朝人看：练枪时说"三号靶"比说坐标快得多。橙色和玩家的白名字区分开。
+      d.nameSprite = makeNameSprite('靶 ' + (w.id < 10 ? '0' + w.id : w.id), '#ffb454');
+      d.nameSprite.position.y = 2.42;
+      d.nameSprite.scale.set(1.7, 0.42, 1);
+      d.group.add(d.nameSprite);
+      dummies.set(w.id, d);
+    }
+  }
+
+  function handleDummyHit(msg) {
+    var d = dummies.get(msg.id);
+    if (!d) return;
+    d.hp = msg.hp;
+    d.hitAnim = DUMMY_HIT_ANIM;
+    if (msg.dead && d.alive) {
+      d.alive = false;
+      startDummyReset(d, msg.resetIn);
+    }
+  }
+
+  function handleDummyReset(msg) {
+    var d = dummies.get(msg.id);
+    if (!d) return;
+    d.hp = (typeof msg.hp === 'number') ? msg.hp : d.maxHp;
+    d.alive = true;
+    d.hitAnim = 0;
+    d.deadAt = 0; d.resetAt = 0;
+  }
+
+  // 靶子每帧只有四件事：倒地/起身、挨枪后仰、血条（倒地后当复位进度条）、标签朝向。
+  // **刻意没有待机晃动**：练枪要的是一个不动的参照物，靶子自己在那儿摇，
+  // 打偏了都分不清是自己抖还是它动。
+  function updateDummies(dt) {
+    if (!dummies.size) return;
+    var now = Date.now();
+    dummies.forEach(function (d) {
+      var tgt = d.alive ? 0 : DUMMY_FALL_MAX;
+      d.fall += (tgt - d.fall) * (1 - Math.exp(-dt * (d.alive ? 7 : 10)));
+      applyDummyFall(d, d.fall);
+
+      if (d.hitAnim > 0) {
+        d.hitAnim = Math.max(0, d.hitAnim - dt);
+        // 上身整体后仰。手臂长在 chest 上，所以整条护架跟着一起后挫，
+        // 这正是"被打了一下"该有的样子。
+        d.chest.rotation.x = Math.sin((d.hitAnim / DUMMY_HIT_ANIM) * Math.PI) * 0.16;
+      } else if (d.chest.rotation.x !== 0) {
+        d.chest.rotation.x = 0;
+      }
+
+      if (d.alive) {
+        var frac = clamp(d.hp / d.maxHp, 0, 1);
+        d.healthFill.scale.x = Math.max(0.001, frac);
+        d.healthFill.position.x = -0.42 * (1 - frac);
+        d.healthFill.material.color.setHex(frac > 0.6 ? 0x3fb950 : (frac > 0.3 ? 0xd29922 : 0xf85149));
+      } else {
+        // 倒地后血条改画复位进度：一条空血条什么也没告诉你，而练枪时
+        // 真正想知道的是"还有多久能再打这个"。
+        var p = d.resetAt > d.deadAt ? clamp((now - d.deadAt) / (d.resetAt - d.deadAt), 0, 1) : 1;
+        d.healthFill.scale.x = Math.max(0.001, p);
+        d.healthFill.position.x = -0.42 * (1 - p);
+        d.healthFill.material.color.setHex(0x58a6ff);
+      }
+
+      var far = d.group.position.distanceToSquared(camera.position) > DUMMY_TAG_DIST * DUMMY_TAG_DIST;
+      d.healthGroup.visible = !far;
+      if (d.nameSprite) d.nameSprite.visible = !far;
+      if (far) return;
+      // 血条朝相机（父节点转过 yaw，所以要先把父节点的旋转除掉）
+      _dq.copy(d.group.quaternion).invert();
+      d.healthGroup.quaternion.copy(camera.quaternion).premultiply(_dq);
+    });
   }
 
   // ----------------------------------------------------------
@@ -5071,6 +5611,7 @@ var smokeParticles = [];
       else if (slot === 'primary') { local.current = 'primary'; local.ranged = local.primary; local.ammo = local.ammoPrimary; local.reserve = local.reservePrimary; }
     else return;
     if (triggerDown) { triggerDown = false; send({ t: 'attack', down: false }); }
+    cancelReload();            // 换弹中切枪：这次换弹作废，新枪立刻可用
     ads = false;
     bloom = 0;                 // 换枪清零累积散射（每把枪的 bloomMax 不同，不能沿用）
     // 连段归零：换手之后第一刀必须是第一段。不清的话拿起斧子的第一下
@@ -5094,6 +5635,16 @@ var smokeParticles = [];
       m.rotation.set(0, 0, 0);
     }
     reloadAnimT = 0; reloadAnimDur = 0; reloadAnimId = ''; reloadSndStage = 0;
+  }
+
+  // 作废整次换弹（不只是动画）。切枪与重生都要调：服务端 handleSwitch / spawn
+  // 会把 p.reloading 清成 false，客户端不跟着清的话，新掏出来的枪会被
+  // localFire 的 `if (local.reloading) return` 挡住，一直挡到下一个快照到达——
+  // 网络一抖就是明显的「换枪后打不出子弹」。
+  function cancelReload() {
+    if (reloadTimer) { clearTimeout(reloadTimer); reloadTimer = 0; }
+    local.reloading = false;
+    cancelReloadAnim();
   }
 
   // auto=true 表示这次换弹不是玩家按 R，而是打空后自动触发的。
@@ -5124,8 +5675,15 @@ var smokeParticles = [];
     reloadAnimT = 0;
     reloadSndStage = 1;        // 第 1 段（退匣）的声音已经由 playReloadSound 播了
     updateHUD();
-    setTimeout(function () {
+    // 记下这次换弹是「哪个槽位的哪把枪」。定时器不能无条件把子弹算给
+    // local.ranged —— 中途切了枪的话，那会拿步枪的弹匣容量去填手枪。
+    var slotAtStart = local.current, gunAtStart = local.ranged;
+    reloadTimer = setTimeout(function () {
+      reloadTimer = 0;
       local.reloading = false;
+      // 这次换弹已经作废（切枪 / 阵亡）。服务端 handleSwitch 同样会清掉 reloading，
+      // 所以这里直接放弃，等下一个快照对齐，不要自己补弹。
+      if (!local.alive || local.current !== slotAtStart || local.ranged !== gunAtStart) { updateHUD(); return; }
       // 从备弹里取，取不满就装半匣（服务端 tick 里的换弹完成逻辑同此）
       var take = Math.min(wpn.mag - local.ammo, local.reserve);
       local.ammo += take;
@@ -5804,6 +6362,7 @@ var smokeParticles = [];
 
     updateLocal(dt);
     updateRemotePlayers(dt);
+    updateDummies(dt);
     updateEffects(dt);
     updateThrowables(dt);
       updateRespawnCountdown();
@@ -5916,5 +6475,13 @@ var smokeParticles = [];
   bindMenu();
   updateHUD();
   animate();
+
+  // ---- 临时几何自检钩子（验完就删）----
+  window.__DUMMYCHK = {
+    THREE: THREE, scene: scene, camera: camera, renderer: renderer,
+    spawnDummies: spawnDummies, dummies: dummies, buildDummyModel: buildDummyModel,
+    updateDummies: updateDummies, createRemotePlayer: createRemotePlayer,
+    applyFall: applyDummyFall, lift: function () { return dummyFallLift; }
+  };
 
 })();
