@@ -22,6 +22,26 @@ const PLAYER_EYE = 1.55;      // 视线高度（枪口/眼睛）
 const PLAYER_CENTER_Y = 1.1;  // 玩家体心高度（手雷、AI 参考点）
 const RESPAWN_TIME = 3000;
 
+// 连杀与击杀回血。
+//
+// 原来的恢复机制是「脱战 5 秒后每秒回血 10 点」，现已删除：那套机制奖励的是
+// 躲起来不打，残血玩家的最优解是退到墙后数五秒，节奏被拖死。
+// 换成击杀回血——想回血只能去赢一次交火，残血抢人反而有回报。
+//
+// KILL_HEAL 取 25：步枪躯干 19/发，25 点差不多补回「一次亏损的换血」，
+// 不至于像回满血那样让先手方无损清场。上限仍是 maxHp。
+const KILL_HEAL = 25;
+
+// 连杀播报层级。键是达到的连杀数，值是播报文案。
+// 只在跨过阈值的那一杀播报，不是每杀都播。
+const STREAK_TIERS = {
+  2: '双杀',
+  3: '三连杀',
+  5: '大杀特杀',
+  7: '暴走',
+  10: '神之领域',
+};
+
 // ---------------------------------------------------------------
 // 命中部位模型
 // ---------------------------------------------------------------
@@ -82,33 +102,62 @@ const THROW_STEP = 1 / 120;    // 积分步长，两端必须相同
 const GRENADE_FUSE = 1500;     // 手雷引信（ms）
 const SMOKE_FUSE = 1100;       // 烟雾弹起效延时（ms）
 
+// 移动基速（m/s）。武器表里的 moveSpeed 是乘在这两个数上的系数。
+//
+// 原来是走 8 / 跑 13。13m/s 比博尔特百米峰值（约 12.4）还快，
+// 在 92m 见方的场地里横穿只要 7 秒，后果是：掩体形同虚设（从掩体 A 冲到
+// 掩体 B 的暴露时间短于对手的反应时间）、狙击和霰弹之间没有距离博弈、
+// 手雷永远炸不到人（1.5s 引信内目标已经跑出 19m，远超杀伤半径）。
+//
+// 4.2 / 6.6 的参照：CS 系列持刀 4.7~5.0，COD 疾跑约 6，Battlefield 约 5.5。
+// 取这一档之后横穿场地约 14 秒，掩体之间的推进重新变成需要判断的事。
+const WALK_SPEED = 4.2;
+const SPRINT_SPEED = 6.6;
+
 // ---------------------------------------------------------------
 // 武器配置（与客户端 public/js/game.js 中保持一致）
 // ---------------------------------------------------------------
+//
+// moveSpeed：该武器在手时的移动速度系数（乘 WALK_SPEED / SPRINT_SPEED）。
+//   取值按「枪的重量与举持姿态」排：刀最快，机枪最慢，步枪定为 1.0 当基准。
+//   这条不只是手感——它是武器之间的核心制衡：狙 0.86 意味着架点的人换位慢，
+//   机枪 0.76 意味着压制火力的代价是丧失机动，而持刀 1.15 让近战武器
+//   有一个真正的存在理由（追人）。原来只有机枪有一个写死的 0.6 特例，
+//   其余全部同速，于是「拿什么枪」只影响输出、不影响走位。
+//
+// reserve：除弹匣内之外携带的备弹总数。0 备弹时无法换弹（见 handleReload）。
+//   过去 reload 直接 p.ammo = mag，等于无限弹药，所以压枪、点射、
+//   换弹时机这些都不构成决策。按「4 个备用弹匣」给，机枪例外（只给 1 个，
+//   但它本身 125 发一匣）。
 const WEAPONS = {
   knife: {
     id: 'knife', name: '战术匕首', type: 'melee',
     damage: 30, range: 2.4, cooldown: 380, arcDot: 0.45,
+    moveSpeed: 1.15,
     color: 0xc0c0c0,
   },
   axe: {
     id: 'axe', name: '消防斧', type: 'melee',
     damage: 60, range: 3.0, cooldown: 950, arcDot: 0.55,
+    moveSpeed: 0.96,
     color: 0xcc3333,
   },
   katana: {
     id: 'katana', name: '武士刀', type: 'melee',
     damage: 40, range: 3.2, cooldown: 560, arcDot: 0.5,
+    moveSpeed: 1.06,
     color: 0x8a8a8a,
   },
     kukri: {
       id: 'kukri', name: '尼泊尔军刀', type: 'melee',
       damage: 45, range: 2.6, cooldown: 450, arcDot: 0.5,
+      moveSpeed: 1.12,
       color: 0x9aa0a0,
     },
     chainsaw: {
       id: 'chainsaw', name: '电锯', type: 'melee',
       damage: 30, range: 2.7, cooldown: 250, arcDot: 0.6,
+      moveSpeed: 0.90,
       color: 0xff6600,
     },
   // 散射/后坐力字段说明（必须与 public/js/game_v2.js 的 WEAPONS 表保持一致）：
@@ -142,31 +191,34 @@ const WEAPONS = {
   // 无论 bloom 多大都攒不起来，所以同时放慢它们的 bloomDecay（狙还抬了 bloomMax）。
   pistol: {
     id: 'pistol', name: '手枪', type: 'ranged',
-    damage: 26, mag: 12, cooldown: 240, range: 90,
+    damage: 26, mag: 12, reserve: 48, cooldown: 240, range: 90,
     pellets: 1, spread: 0.006, reloadTime: 1.3, auto: false,
     bloom: 0.0170, bloomMax: 0.030, bloomDecay: 0.050,
     moveSpread: 0.012, airSpread: 0.020, adsSpread: 0.55,
     hipSpread: 0.020, recoil: 0.0130, recoilH: 0.0045, recoilRamp: 0.85,
+    moveSpeed: 1.06,
     color: 0x444444,
   },
   shotgun: {
     id: 'shotgun', name: '霰弹枪', type: 'ranged',
-    damage: 13, mag: 6, cooldown: 900, range: 45,
+    damage: 13, mag: 6, reserve: 24, cooldown: 900, range: 45,
     pellets: 8, spread: 0.050, reloadTime: 2.3, auto: false,
     bloom: 0.0440, bloomMax: 0.075, bloomDecay: 0.028,
     moveSpread: 0.020, airSpread: 0.030, adsSpread: 0.80,
     // 霰弹枪的腰射惩罚故意给得最小：它本来就是靠 0.05 的弹丸散布吃近距离的，
     // 再叠一个大锥角只会把它从「近战王」变成「什么距离都不行」。
     hipSpread: 0.016, recoil: 0.0330, recoilH: 0.0080, recoilRamp: 0.55,
+    moveSpeed: 0.96,
     color: 0x553311,
   },
   rifle: {
     id: 'rifle', name: '突击步枪', type: 'ranged',
-    damage: 19, mag: 30, cooldown: 105, range: 110,
+    damage: 19, mag: 30, reserve: 120, cooldown: 105, range: 110,
     pellets: 1, spread: 0.005, reloadTime: 1.9, auto: true,
     bloom: 0.0093, bloomMax: 0.042, bloomDecay: 0.055,
     moveSpread: 0.016, airSpread: 0.028, adsSpread: 0.45,
     hipSpread: 0.034, recoil: 0.0090, recoilH: 0.0038, recoilRamp: 1.30,
+    moveSpeed: 1.00,          // 基准
     color: 0x222222,
   },
     awp: {
@@ -177,34 +229,45 @@ const WEAPONS = {
       // 手臂 94 / 腿 96 都刚好留一口气，爆头 282 —— 参照 CS 的 AWP
       // （胸 115、腿不致死）也是这个思路：狙的强度体现在「命中就赢」，
       // 而不是「打到哪都赢」。
-      damage: 120, mag: 5, cooldown: 1400, range: 160,
+      damage: 120, mag: 5, reserve: 20, cooldown: 1400, range: 160,
       pellets: 1, spread: 0.0004, reloadTime: 2.6, auto: false,
       bloom: 0.0200, bloomMax: 0.030, bloomDecay: 0.010,
       moveSpread: 0.030, airSpread: 0.045, adsSpread: 0.15,
       hipSpread: 0.070, recoil: 0.0460, recoilH: 0.0060, recoilRamp: 0.45,
+      moveSpeed: 0.86,
       color: 0x1a3a1a,
     },
     dmr: {
       id: 'dmr', name: '连狙', type: 'ranged',
-      damage: 55, mag: 10, cooldown: 300, range: 120,
+      damage: 55, mag: 10, reserve: 40, cooldown: 300, range: 120,
       pellets: 1, spread: 0.002, reloadTime: 2.1, auto: false,
       bloom: 0.0150, bloomMax: 0.022, bloomDecay: 0.035,
       moveSpread: 0.020, airSpread: 0.032, adsSpread: 0.30,
       hipSpread: 0.046, recoil: 0.0230, recoilH: 0.0050, recoilRamp: 1.00,
+      moveSpeed: 0.93,
       color: 0x2a4a2a,
     },
     lmg: {
       id: 'lmg', name: '重机枪', type: 'ranged',
-      damage: 16, mag: 125, cooldown: 95, range: 100,
+      // 备弹只给一条链（125）而不是四条：250 发总量已经够打完一整条命，
+      // 再多就等于「机枪不用管弹药」，压制火力必须有耗尽的那一刻。
+      damage: 16, mag: 125, reserve: 125, cooldown: 95, range: 100,
       pellets: 1, spread: 0.009, reloadTime: 3.8, auto: true,
       bloom: 0.0070, bloomMax: 0.055, bloomDecay: 0.050,
       moveSpread: 0.024, airSpread: 0.036, adsSpread: 0.60,
       // ramp 最高：125 发的弹链打到后半段必须完全压不住，
       // 否则「一直按着不放」永远优于点射，机枪就没有节奏可言了。
       hipSpread: 0.042, recoil: 0.0062, recoilH: 0.0042, recoilRamp: 1.70,
+      moveSpeed: 0.76,
       color: 0x3a3a3a,
     },
 };
+
+// 投掷物携带上限。复活时重置（见 spawn）。
+// 原来只有 3 秒冷却、数量无限，于是烟雾弹可以一路铺过去当行走掩体，
+// 手雷也没有「留一颗还是现在扔」的取舍。
+const GRENADE_MAX = 2;
+const SMOKE_MAX = 2;
 
 // 近战连段。窗口内连续挥砍会接上下一段，超时归零。
 // dmg/cd 是倍率，乘在 WEAPONS 的基础值上；arcK 乘在 arcDot 上（arcDot 是命中所需的
@@ -348,7 +411,13 @@ function effectiveSpread(p, wpn) {
   const hip = p.ads ? 0 : (wpn.hipSpread || 0);
   const vx = p.vel ? p.vel.x : 0, vz = p.vel ? p.vel.z : 0;
   const speed = Math.sqrt(vx * vx + vz * vz);
-  const moveFrac = clamp(speed / 8, 0, 1);
+  // 归一化必须按**这把枪自己的疾跑速度**，不能是一个写死的常数。
+  // 原来写的是 speed / 8，8 是当时的步行速度；降速到 4.2/6.6 之后，
+  // 那个式子在满速疾跑时也只有 6.6/8 = 0.82，moveSpread 永远吃不满，
+  // 而机枪（疾跑 5.02）更是最多只到 0.63 —— 越重的枪移动惩罚反而越轻，
+  // 正好反了。改成除以自身上限，「跑到最快」对每把枪都等于惩罚拉满。
+  const maxSpeed = SPRINT_SPEED * (wpn.moveSpeed || 1);
+  const moveFrac = clamp(speed / maxSpeed, 0, 1);
   const air = (p.pos.y > 0.35 ? (wpn.airSpread || 0) : 0);
   return base + hip + moveFrac * (wpn.moveSpread || 0) + air;
 }
@@ -684,15 +753,26 @@ class Game {
       current: 'primary',
       kills: 0,
       deaths: 0,
+      streak: 0,         // 本条命的连杀数，死亡归零（见 damage / spawn）
+      bestStreak: 0,     // 本局最高连杀，只在 join 时归零，死亡不清
       ammo: WEAPONS.rifle.mag,
         ammoPrimary: WEAPONS.rifle.mag,
         ammoSecondary: WEAPONS.pistol.mag,
+      // 备弹。reserve 是「当前手上这把枪」的备弹，和 ammo 一样是
+      // reservePrimary/reserveSecondary 的镜像，在换枪与换弹完成时同步回去。
+      // 两把枪的备弹必须分开记：合在一起的话拿手枪换弹会吃掉步枪的子弹。
+      reserve: WEAPONS.rifle.reserve,
+        reservePrimary: WEAPONS.rifle.reserve,
+        reserveSecondary: WEAPONS.pistol.reserve,
+      // 投掷物余量。命名刻意避开 smokes —— Room 上的 this.smokes 是场上
+      // 待生效的烟雾列表，同名会读错对象。
+      grenadeCount: GRENADE_MAX,
+      smokeCount: SMOKE_MAX,
       lastFire: 0,
       lastMelee: 0,
       comboStage: 0,     // 近战连段：这一刀播到第几段（见 meleeAttack）
         lastSmoke: 0,
         lastGrenade: 0,
-        lastDamageTime: 0,
       triggerDown: false,
       bloom: 0,
       ads: false,
@@ -783,6 +863,8 @@ class Game {
     p.joined = true;
     p.kills = 0;
     p.deaths = 0;
+    p.streak = 0;
+    p.bestStreak = 0;   // 只有重新加入才清最高连杀；死亡只清 streak
     p.hp = p.maxHp;
     p.alive = true;
     p.ammo = WEAPONS[p.ranged].mag;
@@ -803,6 +885,11 @@ class Game {
           secondary: p.secondary,
           ammoPrimary: p.ammoPrimary,
           ammoSecondary: p.ammoSecondary,
+          reserve: p.reserve,
+          reservePrimary: p.reservePrimary,
+          reserveSecondary: p.reserveSecondary,
+          grenadeCount: p.grenadeCount,
+          smokeCount: p.smokeCount,
         ranged: p.ranged,
       });
     this.broadcast({ t: 'join', id: p.id, name: p.name });
@@ -825,15 +912,24 @@ class Game {
     p.pitch = 0;
     p.hp = p.maxHp;
     p.alive = true;
-      p.lastDamageTime = 0;
       p.current = 'primary';
       p.ranged = p.primary;
       p.ammoPrimary = WEAPONS[p.primary].mag;
       p.ammoSecondary = WEAPONS.pistol.mag;
     p.ammo = WEAPONS[p.ranged].mag;
+      // 复活重置补给：弹匣、备弹、手雷、烟雾弹全部回到出场状态。
+      // 这是「弹药有限」能成立的前提——耗尽后靠死一次找补给会很怪，
+      // 所以补给周期就等于一条命。
+      p.reservePrimary = WEAPONS[p.primary].reserve;
+      p.reserveSecondary = WEAPONS.pistol.reserve;
+    p.reserve = WEAPONS[p.ranged].reserve;
+      p.grenadeCount = GRENADE_MAX;
+      p.smokeCount = SMOKE_MAX;
     p.reloading = false;
     p.triggerDown = false;
     p.bloom = 0;
+    p.streak = 0;              // 新的一条命，连杀从零开始（死亡时也清过一次，这里是把
+                               // 「一条命的开始」这个不变量落在同一个地方）
     p.comboStage = 0;          // 重生后连段归零，不要接着上一条命的段号
     p.lastMelee = 0;
   }
@@ -875,8 +971,8 @@ class Game {
   handleSwitch(p, msg) {
     if (!p.joined) return;
     if (msg.slot === 'melee') { p.current = 'melee'; }
-    else if (msg.slot === 'secondary') { p.current = 'secondary'; p.ranged = 'pistol'; p.ammo = p.ammoSecondary; }
-      else if (msg.slot === 'primary') { p.current = 'primary'; p.ranged = p.primary; p.ammo = p.ammoPrimary; }
+    else if (msg.slot === 'secondary') { p.current = 'secondary'; p.ranged = 'pistol'; p.ammo = p.ammoSecondary; p.reserve = p.reserveSecondary; }
+      else if (msg.slot === 'primary') { p.current = 'primary'; p.ranged = p.primary; p.ammo = p.ammoPrimary; p.reserve = p.reservePrimary; }
     p.triggerDown = false;
       p.reloading = false;
       p.bloom = 0;             // 换枪清零累积散射（每把枪的 bloomMax 不同，不能沿用）
@@ -888,7 +984,11 @@ class Game {
     if (!p.joined || !p.alive) return;
     if (p.current === 'melee') return;
     const wpn = WEAPONS[p.ranged];
-    if (p.reloading || p.ammo >= wpn.mag) return;
+    // 备弹为 0 时直接拒绝：不能进 reloading，也不能广播。
+    // 广播了客户端就会播一整套换弹动作，一秒多之后弹匣还是空的——
+    // 看起来像卡住了，实际是「没子弹可装」。空仓的反馈应该是干响（客户端的
+    // playDryFireSound），而不是一段假动作。
+    if (p.reloading || p.ammo >= wpn.mag || p.reserve <= 0) return;
     p.reloading = true;
     p.bloom = 0;               // 换弹期间枪口稳定下来
     p.reloadEnd = Date.now() + wpn.reloadTime * 1000;
@@ -918,9 +1018,11 @@ class Game {
 
     handleSmoke(p, msg) {
       if (!p.joined || !p.alive) return;
+      if (p.smokeCount <= 0) return;      // 数量耗尽，冷却已过也不给
       const now = Date.now();
       if (now - p.lastSmoke < 3000) return;
       p.lastSmoke = now;
+      p.smokeCount--;
       const st = this.throwState(p, msg);
       const land = simulateThrown(st.origin, st.vel, SMOKE_FUSE);
       this.smokes.push({ at: now + SMOKE_FUSE, pos: land, owner: p.id });
@@ -929,9 +1031,11 @@ class Game {
 
     handleGrenade(p, msg) {
       if (!p.joined || !p.alive) return;
+      if (p.grenadeCount <= 0) return;
       const now = Date.now();
       if (now - p.lastGrenade < 3000) return;
       p.lastGrenade = now;
+      p.grenadeCount--;
       const st = this.throwState(p, msg);
       const land = simulateThrown(st.origin, st.vel, GRENADE_FUSE);
       this.explosions.push({ at: now + GRENADE_FUSE, pos: land, owner: p.id });
@@ -952,14 +1056,15 @@ class Game {
       // 换弹完成
       if (p.reloading && now >= p.reloadEnd) {
         p.reloading = false;
-        p.ammo = WEAPONS[p.ranged].mag;
-          if (p.current === 'secondary') { p.ammoSecondary = p.ammo; } else { p.ammoPrimary = p.ammo; }
+        // 从备弹里取，而不是直接填满。备弹不足时装个半匣——
+        // 这正是「最后一匣」该有的样子，也是玩家决定要不要换枪的信息。
+        const wpn = WEAPONS[p.ranged];
+        const take = Math.min(wpn.mag - p.ammo, p.reserve);
+        p.ammo += take;
+        p.reserve -= take;
+          if (p.current === 'secondary') { p.ammoSecondary = p.ammo; p.reserveSecondary = p.reserve; }
+          else { p.ammoPrimary = p.ammo; p.reservePrimary = p.reserve; }
       }
-
-        // 脱离战斗 5 秒后每秒回血 10 点
-        if (p.alive && p.hp < p.maxHp && now - p.lastDamageTime >= 5000) {
-          p.hp = Math.min(p.maxHp, p.hp + 10 * TICK_RATE / 1000);
-        }
 
       // 死亡复活
       if (!p.alive && now >= p.respawnAt) {
@@ -1034,7 +1139,14 @@ class Game {
         ranged: p.ranged,
         kills: p.kills,
         deaths: p.deaths,
+        streak: p.streak,
+        bestStreak: p.bestStreak,
         ammo: p.ammo,
+        reserve: p.reserve,
+        reservePrimary: p.reservePrimary,
+        reserveSecondary: p.reserveSecondary,
+        grenadeCount: p.grenadeCount,
+        smokeCount: p.smokeCount,
         reloading: p.reloading,
       });
     }
@@ -1220,14 +1332,34 @@ class Game {
   // 两者都没有「命中点」这个概念，硬凑一个部位出来只会是假的。
   damage(victim, attacker, wpn, amount, zone) {
     if (!victim.alive) return;
-      victim.lastDamageTime = Date.now();
     victim.hp -= amount;
     if (victim.hp <= 0) {
       victim.hp = 0;
       victim.alive = false;
       victim.triggerDown = false;
       victim.deaths++;
-      if (attacker && attacker.id !== victim.id) attacker.kills++;
+      victim.streak = 0;        // 死亡打断连杀（bestStreak 保留，那是本局统计）
+
+      // 有效击杀 = 有攻击者且不是自杀。自杀（自己的手雷）不给连杀也不回血，
+      // 否则残血玩家可以脚下扔雷刷血。
+      const validKill = !!attacker && attacker.id !== victim.id;
+      let streakTier = null;
+      let healed = 0;
+      if (validKill) {
+        attacker.kills++;
+        attacker.streak++;
+        if (attacker.streak > attacker.bestStreak) attacker.bestStreak = attacker.streak;
+        // 击杀回血。取代已删除的脱战回血：只在赢下交火时给，
+        // 且必须活着才有意义（同时被击杀的情况下攻击者已经 alive=false）。
+        if (attacker.alive && attacker.hp < attacker.maxHp) {
+          const before = attacker.hp;
+          attacker.hp = Math.min(attacker.maxHp, attacker.hp + KILL_HEAL);
+          healed = Math.round(attacker.hp - before);
+        }
+        // 只在**跨过**阈值的那一杀播报，连杀 4 不会重复播 3 的文案
+        streakTier = STREAK_TIERS[attacker.streak] || null;
+      }
+
       victim.respawnAt = Date.now() + RESPAWN_TIME;
       this.broadcast({
         t: 'kill',
@@ -1238,6 +1370,9 @@ class Game {
         weaponId: wpn.id,
         zone: zone || null,
         zoneLabel: zone ? (ZONE_LABEL[zone] || null) : null,
+        streak: validKill ? attacker.streak : 0,
+        streakLabel: streakTier,
+        healed: healed,
       });
     }
   }

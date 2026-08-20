@@ -206,6 +206,14 @@
   #weaponName { font-size: 20px; font-weight: 700; }
   #ammoText { font-size: 32px; font-weight: 800; letter-spacing: 1px; }
   #ammoText.low { color: var(--bad); }
+  /* 备弹见底单独标出来。「弹匣空了」和「彻底没子弹了」是两个完全不同的处境：
+     前者按 R 就好，后者只能换枪或者去拼刀，所以不能共用一个红色。*/
+  #ammoText .ammo-reserve { font-size: 18px; font-weight: 700; color: var(--muted); }
+  #ammoText .ammo-reserve.empty { color: var(--bad); }
+  /* 投掷物余量。0 的那一项压暗，一眼能看出还剩什么 */
+  #throwText { font-size: 14px; font-weight: 700; margin-top: 2px; letter-spacing: 1px; }
+  #throwText .th-item { margin-left: 8px; }
+  #throwText .th-item.out { opacity: .35; }
   #reloadTip { font-size: 13px; color: var(--accent2); display: none; margin-top: 4px; }
   /* 换弹进度条：换弹时间 1.3s~3.8s 差别很大，光有"换弹中…"看不出还要等多久 */
   #reloadBar {
@@ -370,6 +378,57 @@
   }
   @keyframes feedIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
 
+  /* 连杀播报。放在准星上方偏高的位置（顶部 22%）：
+     再往下会压住准星和敌人上半身，再往上会和 killfeed 抢注意力。
+     pointer-events:none 是必须的——它盖在画面正中，否则会吃掉鼠标点击。*/
+  #streakBanner {
+    position: absolute; left: 50%; top: 22%;
+    transform: translate(-50%, -50%);
+    display: none; text-align: center;
+    pointer-events: none;
+    text-shadow: 0 2px 10px rgba(0,0,0,.9);
+  }
+  #streakBanner.show { display: block; animation: streakPop .9s ease-out forwards; }
+  #streakLabel {
+    display: block;
+    font-size: 34px; font-weight: 900; letter-spacing: 4px;
+    color: #ffcf3a;
+    /* 两层发光：内层暖白让字芯不糊，外层橙红拉出「燃」的感觉。
+       单层阴影在亮色场地上会被冲掉，看不出高光。*/
+    text-shadow: 0 0 10px rgba(255,236,180,.95), 0 0 26px rgba(255,90,30,.85), 0 2px 10px rgba(0,0,0,.9);
+  }
+  #streakCount {
+    display: block; margin-top: 2px;
+    font-size: 14px; font-weight: 700; letter-spacing: 2px;
+    color: #ffd9b0;
+  }
+  /* 先冲上来再回落定住，最后淡出。scale 起手 0.6 而不是 0，
+     从 0 放大会有一帧几乎不可见，读起来像掉帧。*/
+  @keyframes streakPop {
+    0%   { opacity: 0; transform: translate(-50%,-50%) scale(.6); }
+    18%  { opacity: 1; transform: translate(-50%,-50%) scale(1.18); }
+    32%  { opacity: 1; transform: translate(-50%,-50%) scale(1); }
+    75%  { opacity: 1; transform: translate(-50%,-50%) scale(1); }
+    100% { opacity: 0; transform: translate(-50%,-50%) scale(.96); }
+  }
+
+  /* 击杀回血提示：跟着连杀播报走，但独立一行、绿色，
+     和「掉血闪红」形成对照，让「杀人=回血」这条规则一眼可见。*/
+  #healPopup {
+    position: absolute; left: 50%; top: 58%;
+    transform: translate(-50%,-50%);
+    display: none; pointer-events: none;
+    font-size: 20px; font-weight: 800; letter-spacing: 1px;
+    color: #7ee787;
+    text-shadow: 0 0 12px rgba(63,185,80,.9), 0 2px 8px rgba(0,0,0,.9);
+  }
+  #healPopup.show { display: block; animation: healRise .85s ease-out forwards; }
+  @keyframes healRise {
+    0%   { opacity: 0; transform: translate(-50%,-30%) scale(.85); }
+    22%  { opacity: 1; transform: translate(-50%,-50%) scale(1.05); }
+    100% { opacity: 0; transform: translate(-50%,-95%) scale(1); }
+  }
+
     #leaderboard {
       position: absolute; left: 20px; top: 78px;
       width: 230px;
@@ -399,6 +458,12 @@
     .lb-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .lb-kills { font-weight: 700; color: #ffb4a8; margin-right: 4px; }
     .lb-deaths { color: var(--muted); font-size: 11px; }
+    /* 连杀。0 连杀时客户端不渲染这个 span，避免一列全是「0 连」的噪声；
+       只有正在连杀的人才亮出来，扫一眼就知道该先集火谁。*/
+    .lb-streak { color: #ffcf3a; font-weight: 700; font-size: 11px; margin-left: 6px; }
+    /* 战绩表里的连杀列：本命连杀用亮色，本局最高用灰色小字跟在后面 */
+    #scoreboard .sb-streak { color: #ffcf3a; font-weight: 700; }
+    #scoreboard .sb-best { color: var(--muted); font-size: 11px; margin-left: 4px; }
 
   #scoreboard {
     position: absolute; left: 50%; top: 50%;
@@ -494,31 +559,31 @@
           <div class="check"></div>
           <div class="w-name">🔪 战术匕首</div>
           <div class="w-type">近战 · 攻速极快</div>
-          <div class="w-stats">伤害 30<br>范围 2.4m · 冷却 0.38s</div>
+          <div class="w-stats">伤害 30 · 移速 +15%<br>范围 2.4m · 冷却 0.38s</div>
         </div>
         <div class="weapon-card" data-id="axe">
           <div class="check"></div>
           <div class="w-name">🪓 消防斧</div>
           <div class="w-type">近战 · 重击</div>
-          <div class="w-stats">伤害 60<br>范围 3.0m · 冷却 0.95s</div>
+          <div class="w-stats">伤害 60 · 移速 -4%<br>范围 3.0m · 冷却 0.95s</div>
         </div>
         <div class="weapon-card" data-id="katana">
           <div class="check"></div>
           <div class="w-name">⚔️ 武士刀</div>
           <div class="w-type">近战 · 均衡</div>
-          <div class="w-stats">伤害 40<br>范围 3.2m · 冷却 0.56s</div>
+          <div class="w-stats">伤害 40 · 移速 +6%<br>范围 3.2m · 冷却 0.56s</div>
         </div>
           <div class="weapon-card" data-id="kukri">
             <div class="check"></div>
             <div class="w-name">🗡️ 尼泊尔军刀</div>
             <div class="w-type">近战 · 弯刀</div>
-            <div class="w-stats">伤害 45<br>范围 2.6m · 冷却 0.45s</div>
+            <div class="w-stats">伤害 45 · 移速 +12%<br>范围 2.6m · 冷却 0.45s</div>
           </div>
           <div class="weapon-card" data-id="chainsaw">
             <div class="check"></div>
             <div class="w-name">🪚 电锯</div>
             <div class="w-type">近战 · 极速切割</div>
-            <div class="w-stats">伤害 30<br>范围 2.7m · 冷却 0.25s</div>
+            <div class="w-stats">伤害 30 · 移速 -10%<br>范围 2.7m · 冷却 0.25s</div>
           </div>
       </div>
     </div>
@@ -530,37 +595,37 @@
           <div class="check"></div>
           <div class="w-name">🔫 手枪</div>
           <div class="w-type">副武器 · 自动装备</div>
-          <div class="w-stats">伤害 26 · 弹匣 12<br>射程 90m · 射速 240ms</div>
+          <div class="w-stats">伤害 26 · 弹匣 12 · 备弹 48<br>射程 90m · 射速 240ms · 移速 +6%</div>
         </div>
         <div class="weapon-card" data-id="shotgun">
           <div class="check"></div>
           <div class="w-name">💥 霰弹枪</div>
           <div class="w-type">半自动 · 近距爆发</div>
-          <div class="w-stats">伤害 13×8 弹丸 · 弹匣 6<br>射程 45m · 射速 900ms</div>
+          <div class="w-stats">伤害 13×8 弹丸 · 弹匣 6 · 备弹 24<br>射程 45m · 射速 900ms · 移速 -4%</div>
         </div>
         <div class="weapon-card selected" data-id="rifle">
           <div class="check"></div>
           <div class="w-name">🎯 突击步枪</div>
           <div class="w-type">全自动 · 持续火力</div>
-          <div class="w-stats">伤害 19 · 弹匣 30<br>射程 110m · 射速 105ms</div>
+          <div class="w-stats">伤害 19 · 弹匣 30 · 备弹 120<br>射程 110m · 射速 105ms · 移速 基准</div>
         </div>
           <div class="weapon-card" data-id="awp">
             <div class="check"></div>
             <div class="w-name">🎯 狙击步枪</div>
             <div class="w-type">栓动 · 一枪毙命</div>
-            <div class="w-stats">伤害 150 · 弹匣 5<br>射程 160m · 射速 1400ms</div>
+            <div class="w-stats">伤害 120 · 弹匣 5 · 备弹 20<br>射程 160m · 射速 1400ms · 移速 -14%</div>
           </div>
             <div class="weapon-card" data-id="dmr">
               <div class="check"></div>
               <div class="w-name">🎯 连狙</div>
               <div class="w-type">半自动 · 两发毙命</div>
-              <div class="w-stats">伤害 55 · 弹匣 10<br>射程 120m · 射速 300ms</div>
+              <div class="w-stats">伤害 55 · 弹匣 10 · 备弹 40<br>射程 120m · 射速 300ms · 移速 -7%</div>
             </div>
             <div class="weapon-card" data-id="lmg">
               <div class="check"></div>
               <div class="w-name">🔥 重机枪</div>
               <div class="w-type">全自动 · 火力压制</div>
-              <div class="w-stats">伤害 16 · 弹匣 125<br>射程 100m · 射速 95ms</div>
+              <div class="w-stats">伤害 16 · 弹匣 125 · 备弹 125<br>射程 100m · 射速 95ms · 移速 -24%</div>
             </div>
       </div>
     </div>
@@ -597,6 +662,8 @@
       <p id="respawnCountdown">3 秒后自动复活…</p>
     </div>
   </div>
+  <div id="streakBanner"><span id="streakLabel"></span><span id="streakCount"></span></div>
+  <div id="healPopup"></div>
   <div id="healthWrap">
     <div id="localNameTag">玩家：未命名</div>
       <div id="healthBar"><div id="healthFill"></div></div>
@@ -605,7 +672,8 @@
   </div>
   <div id="weaponWrap">
     <div id="weaponName">手枪</div>
-    <div id="ammoText">12 / ∞</div>
+    <div id="ammoText">12 / 48</div>
+    <div id="throwText"></div>
     <div id="reloadTip">换弹中…<div id="reloadBar"><i></i></div></div>
   </div>
     <div id="leaderboard">
@@ -615,7 +683,7 @@
   <div id="scoreboard">
     <h3>实时战绩</h3>
     <table>
-      <thead><tr><th>玩家</th><th>状态</th><th>击杀</th><th>死亡</th><th>K/D</th></tr></thead>
+      <thead><tr><th>玩家</th><th>状态</th><th>击杀</th><th>死亡</th><th>连杀</th><th>K/D</th></tr></thead>
       <tbody id="scoreBody"></tbody>
     </table>
   </div>

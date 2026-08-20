@@ -16,12 +16,20 @@
   // ----------------------------------------------------------
   // 武器配置（与服务器 server.js 保持一致）
   // ----------------------------------------------------------
+  //
+  // moveSpeed：持这把武器时的移动速度系数，乘在 WALK_SPEED / SPRINT_SPEED 上。
+  //   刀最快、机枪最慢、步枪 = 1.0 为基准。这是武器之间的主要制衡之一，
+  //   两端的表必须一致：服务端拿它算移动散射的归一化上限（effectiveSpread），
+  //   客户端拿它算实际速度，不一致会出现「跑到最快但散射没吃满」之类的错位。
+  // reserve：弹匣之外的备弹总数，0 备弹无法换弹。
+  var WALK_SPEED = 4.2;         // 原 8：太快，掩体间的推进没有暴露时间可言
+  var SPRINT_SPEED = 6.6;       // 原 13：比人类百米峰值还快
   var WEAPONS = {
-    knife: { id: 'knife', name: '战术匕首', type: 'melee', damage: 30, range: 2.4, cooldown: 380, arcDot: 0.45, color: 0xc0c0c0 },
-    axe: { id: 'axe', name: '消防斧', type: 'melee', damage: 60, range: 3.0, cooldown: 950, arcDot: 0.55, color: 0xcc3333 },
-    katana: { id: 'katana', name: '武士刀', type: 'melee', damage: 40, range: 3.2, cooldown: 560, arcDot: 0.5, color: 0x8a8a8a },
-      kukri: { id: 'kukri', name: '尼泊尔军刀', type: 'melee', damage: 45, range: 2.6, cooldown: 450, arcDot: 0.5, color: 0x9aa0a0 },
-      chainsaw: { id: 'chainsaw', name: '电锯', type: 'melee', damage: 30, range: 2.7, cooldown: 250, arcDot: 0.6, color: 0xff6600 },
+    knife: { id: 'knife', name: '战术匕首', type: 'melee', damage: 30, range: 2.4, cooldown: 380, arcDot: 0.45, moveSpeed: 1.15, color: 0xc0c0c0 },
+    axe: { id: 'axe', name: '消防斧', type: 'melee', damage: 60, range: 3.0, cooldown: 950, arcDot: 0.55, moveSpeed: 0.96, color: 0xcc3333 },
+    katana: { id: 'katana', name: '武士刀', type: 'melee', damage: 40, range: 3.2, cooldown: 560, arcDot: 0.5, moveSpeed: 1.06, color: 0x8a8a8a },
+      kukri: { id: 'kukri', name: '尼泊尔军刀', type: 'melee', damage: 45, range: 2.6, cooldown: 450, arcDot: 0.5, moveSpeed: 1.12, color: 0x9aa0a0 },
+      chainsaw: { id: 'chainsaw', name: '电锯', type: 'melee', damage: 30, range: 2.7, cooldown: 250, arcDot: 0.6, moveSpeed: 0.90, color: 0xff6600 },
     // 散射/后坐力字段（必须与 server.js 的 WEAPONS 表逐字一致，否则准星画的
     // 散射圈和服务端真正判定的散射不是一回事）：
     //   spread 首发锥形散射半角(rad) / bloom 每发累加 / bloomMax 上限 / bloomDecay 每秒回落
@@ -38,13 +46,17 @@
     // 模拟一梭子 30 发，每一发的散射和抬枪量分毫不差。
     // 现在按「打满 N 发到上限」反解：bloom = bloomDecay×cooldown/1000 + bloomMax/N。
     // N 取值：手枪 6、霰弹 4、步枪 12、狙 5、连狙 5、机枪 25。
-    pistol: { id: 'pistol', name: '手枪', type: 'ranged', damage: 26, mag: 12, cooldown: 240, range: 90, pellets: 1, spread: 0.006, reloadTime: 1.3, auto: false, bloom: 0.0170, bloomMax: 0.030, bloomDecay: 0.050, moveSpread: 0.012, airSpread: 0.020, adsSpread: 0.55, hipSpread: 0.020, recoil: 0.0130, recoilH: 0.0045, recoilRamp: 0.85, color: 0x444444 },
-    shotgun: { id: 'shotgun', name: '霰弹枪', type: 'ranged', damage: 13, mag: 6, cooldown: 900, range: 45, pellets: 8, spread: 0.050, reloadTime: 2.3, auto: false, bloom: 0.0440, bloomMax: 0.075, bloomDecay: 0.028, moveSpread: 0.020, airSpread: 0.030, adsSpread: 0.80, hipSpread: 0.016, recoil: 0.0330, recoilH: 0.0080, recoilRamp: 0.55, color: 0x553311 },
-    rifle: { id: 'rifle', name: '突击步枪', type: 'ranged', damage: 19, mag: 30, cooldown: 105, range: 110, pellets: 1, spread: 0.005, reloadTime: 1.9, auto: true, bloom: 0.0093, bloomMax: 0.042, bloomDecay: 0.055, moveSpread: 0.016, airSpread: 0.028, adsSpread: 0.45, hipSpread: 0.034, recoil: 0.0090, recoilH: 0.0038, recoilRamp: 1.30, color: 0x222222 },
-    awp: { id: 'awp', name: '狙击步枪', type: 'ranged', damage: 120, mag: 5, cooldown: 1400, range: 160, pellets: 1, spread: 0.0004, reloadTime: 2.6, auto: false, bloom: 0.0200, bloomMax: 0.030, bloomDecay: 0.010, moveSpread: 0.030, airSpread: 0.045, adsSpread: 0.15, hipSpread: 0.070, recoil: 0.0460, recoilH: 0.0060, recoilRamp: 0.45, color: 0x1a3a1a },
-      dmr: { id: 'dmr', name: '连狙', type: 'ranged', damage: 55, mag: 10, cooldown: 300, range: 120, pellets: 1, spread: 0.002, reloadTime: 2.1, auto: false, bloom: 0.0150, bloomMax: 0.022, bloomDecay: 0.035, moveSpread: 0.020, airSpread: 0.032, adsSpread: 0.30, hipSpread: 0.046, recoil: 0.0230, recoilH: 0.0050, recoilRamp: 1.00, color: 0x2a4a2a },
-      lmg: { id: 'lmg', name: '重机枪', type: 'ranged', damage: 16, mag: 125, cooldown: 95, range: 100, pellets: 1, spread: 0.009, reloadTime: 3.8, auto: true, bloom: 0.0070, bloomMax: 0.055, bloomDecay: 0.050, moveSpread: 0.024, airSpread: 0.036, adsSpread: 0.60, hipSpread: 0.042, recoil: 0.0062, recoilH: 0.0042, recoilRamp: 1.70, color: 0x3a3a3a }
+    pistol: { id: 'pistol', name: '手枪', type: 'ranged', damage: 26, mag: 12, reserve: 48, cooldown: 240, range: 90, pellets: 1, spread: 0.006, reloadTime: 1.3, auto: false, bloom: 0.0170, bloomMax: 0.030, bloomDecay: 0.050, moveSpread: 0.012, airSpread: 0.020, adsSpread: 0.55, hipSpread: 0.020, recoil: 0.0130, recoilH: 0.0045, recoilRamp: 0.85, moveSpeed: 1.06, color: 0x444444 },
+    shotgun: { id: 'shotgun', name: '霰弹枪', type: 'ranged', damage: 13, mag: 6, reserve: 24, cooldown: 900, range: 45, pellets: 8, spread: 0.050, reloadTime: 2.3, auto: false, bloom: 0.0440, bloomMax: 0.075, bloomDecay: 0.028, moveSpread: 0.020, airSpread: 0.030, adsSpread: 0.80, hipSpread: 0.016, recoil: 0.0330, recoilH: 0.0080, recoilRamp: 0.55, moveSpeed: 0.96, color: 0x553311 },
+    rifle: { id: 'rifle', name: '突击步枪', type: 'ranged', damage: 19, mag: 30, reserve: 120, cooldown: 105, range: 110, pellets: 1, spread: 0.005, reloadTime: 1.9, auto: true, bloom: 0.0093, bloomMax: 0.042, bloomDecay: 0.055, moveSpread: 0.016, airSpread: 0.028, adsSpread: 0.45, hipSpread: 0.034, recoil: 0.0090, recoilH: 0.0038, recoilRamp: 1.30, moveSpeed: 1.00, color: 0x222222 },
+    awp: { id: 'awp', name: '狙击步枪', type: 'ranged', damage: 120, mag: 5, reserve: 20, cooldown: 1400, range: 160, pellets: 1, spread: 0.0004, reloadTime: 2.6, auto: false, bloom: 0.0200, bloomMax: 0.030, bloomDecay: 0.010, moveSpread: 0.030, airSpread: 0.045, adsSpread: 0.15, hipSpread: 0.070, recoil: 0.0460, recoilH: 0.0060, recoilRamp: 0.45, moveSpeed: 0.86, color: 0x1a3a1a },
+      dmr: { id: 'dmr', name: '连狙', type: 'ranged', damage: 55, mag: 10, reserve: 40, cooldown: 300, range: 120, pellets: 1, spread: 0.002, reloadTime: 2.1, auto: false, bloom: 0.0150, bloomMax: 0.022, bloomDecay: 0.035, moveSpread: 0.020, airSpread: 0.032, adsSpread: 0.30, hipSpread: 0.046, recoil: 0.0230, recoilH: 0.0050, recoilRamp: 1.00, moveSpeed: 0.93, color: 0x2a4a2a },
+      lmg: { id: 'lmg', name: '重机枪', type: 'ranged', damage: 16, mag: 125, reserve: 125, cooldown: 95, range: 100, pellets: 1, spread: 0.009, reloadTime: 3.8, auto: true, bloom: 0.0070, bloomMax: 0.055, bloomDecay: 0.050, moveSpread: 0.024, airSpread: 0.036, adsSpread: 0.60, hipSpread: 0.042, recoil: 0.0062, recoilH: 0.0042, recoilRamp: 1.70, moveSpeed: 0.76, color: 0x3a3a3a }
   };
+
+  // 投掷物携带上限（与 server.js 一致）
+  var GRENADE_MAX = 2;
+  var SMOKE_MAX = 2;
 
   var BOXES = [
     { x: -12, z: -8, w: 4, h: 3, d: 4 },
@@ -324,6 +336,7 @@ var respawnCountdownEl = document.getElementById('respawnCountdown');
 var localNameTag = document.getElementById('localNameTag');
   var weaponName = document.getElementById('weaponName');
   var ammoText = document.getElementById('ammoText');
+  var throwText = document.getElementById('throwText');
   var reloadTip = document.getElementById('reloadTip');
   var reloadFill = document.querySelector('#reloadBar > i');
   var reloadBar = document.getElementById('reloadBar');
@@ -336,6 +349,12 @@ var localNameTag = document.getElementById('localNameTag');
   var scoreboard = document.getElementById('scoreboard');
   var scoreBody = document.getElementById('scoreBody');
 var leaderboardList = document.getElementById('leaderboardList');
+  var streakBanner = document.getElementById('streakBanner');
+  var streakLabel = document.getElementById('streakLabel');
+  var streakCount = document.getElementById('streakCount');
+  var healPopup = document.getElementById('healPopup');
+  var streakHideTimer = 0;
+  var healHideTimer = 0;
 
   // ----------------------------------------------------------
   // 状态
@@ -359,9 +378,18 @@ var leaderboardList = document.getElementById('leaderboardList');
       ranged: 'rifle',
     kills: 0,
     deaths: 0,
+    streak: 0,
+    bestStreak: 0,
     ammo: WEAPONS.rifle.mag,
       ammoPrimary: WEAPONS.rifle.mag,
       ammoSecondary: WEAPONS.pistol.mag,
+    // 备弹镜像，规则同 ammo：reserve 是手上这把枪的，换枪/换弹完成时与
+    // reservePrimary / reserveSecondary 同步（服务端 handleSwitch 也这么做）
+    reserve: WEAPONS.rifle.reserve,
+      reservePrimary: WEAPONS.rifle.reserve,
+      reserveSecondary: WEAPONS.pistol.reserve,
+    grenadeCount: GRENADE_MAX,
+    smokeCount: SMOKE_MAX,
     reloading: false
   };
 
@@ -3428,7 +3456,7 @@ var smokeParticles = [];
       targetYaw: 0, renderYaw: 0, targetPitch: 0, renderPitch: 0,
       vel: new THREE.Vector3(0, 0, 0), walkPhase: Math.random() * Math.PI * 2,
       deadT: 0, hp: 100, alive: true, current: 'primary', melee: 'knife',
-      primary: 'rifle', secondary: 'pistol', kills: 0, deaths: 0,
+      primary: 'rifle', secondary: 'pistol', kills: 0, deaths: 0, streak: 0, bestStreak: 0,
       fireAnim: 0, swingAnim: 0, throwAnim: 0, firstUpdate: true,
       // 换弹动画：已播时长 / 总时长 / 播的是哪把枪的模型
       reloadAnim: 0, reloadDur: 0, reloadModel: null, reloadId: '',
@@ -3593,7 +3621,9 @@ var smokeParticles = [];
     var base = (wpn.spread + bloom) * (aiming ? (wpn.adsSpread || 1) : 1);
     var hip = aiming ? 0 : (wpn.hipSpread || 0);
     var speed = Math.sqrt(local.vel.x * local.vel.x + local.vel.z * local.vel.z);
-    var moveFrac = clamp(speed / 8, 0, 1);
+    // 按这把枪自己的疾跑速度归一化（服务端 effectiveSpread 同此），
+    // 不能沿用旧的写死常数 8 —— 那是降速前的步行速度。
+    var moveFrac = clamp(speed / (SPRINT_SPEED * (wpn.moveSpeed || 1)), 0, 1);
     var air = (local.pos.y > 0.35 ? (wpn.airSpread || 0) : 0);
     return base + hip + moveFrac * (wpn.moveSpread || 0) + air;
   }
@@ -3789,6 +3819,59 @@ var smokeParticles = [];
     ensureAudio();
     playTone(220, 0.3, 0.4, 'sawtooth');
     playTone(110, 0.4, 0.35, 'sawtooth');
+  }
+
+  // 连杀播报音：一个向上的三音琶音，层级越高起音越高。
+  // 用上行音阶而不是单音，是为了在连发枪声（1.4kHz 方波命中音、
+  // 低频枪响）里留下一个"旋律"型的听觉标记——单音会被淹掉。
+  function playStreakSound(streak) {
+    ensureAudio();
+    var base = 520 + Math.min(streak, 10) * 45;
+    playTone(base, 0.09, 0.3, 'square');
+    setTimeout(function () { playTone(base * 1.25, 0.09, 0.3, 'square'); }, 90);
+    setTimeout(function () { playTone(base * 1.5, 0.14, 0.32, 'square'); }, 180);
+  }
+
+  // 击杀回血提示音：短促上扬，跟连杀播报的琶音区分开。
+  function playHealSound() {
+    ensureAudio();
+    playTone(660, 0.06, 0.2, 'triangle');
+    setTimeout(function () { playTone(990, 0.08, 0.22, 'triangle'); }, 60);
+  }
+
+  // 显示连杀横幅。
+  //
+  // 关键点是那个强制 reflow：连续两次跨阈值击杀（比如 2 连紧跟 3 连）之间，
+  // 如果只是把 class 摘掉再加回去，浏览器会把这两次样式变更合并成"没变化"，
+  // CSS 动画不会重播，第二次播报就是静止的。读一下 offsetWidth 强制布局，
+  // 才能让动画真正重新开始。
+  function showStreakBanner(label, streak) {
+    if (!streakBanner) return;
+    streakLabel.textContent = label;
+    streakCount.textContent = streak + ' 连杀';
+    streakBanner.classList.remove('show');
+    void streakBanner.offsetWidth;
+    streakBanner.classList.add('show');
+    if (streakHideTimer) clearTimeout(streakHideTimer);
+    streakHideTimer = setTimeout(function () {
+      streakBanner.classList.remove('show');
+      streakHideTimer = 0;
+    }, 1600);
+    playStreakSound(streak);
+  }
+
+  function showHealPopup(amount) {
+    if (!healPopup) return;
+    healPopup.textContent = '+' + amount + ' HP';
+    healPopup.classList.remove('show');
+    void healPopup.offsetWidth;
+    healPopup.classList.add('show');
+    if (healHideTimer) clearTimeout(healHideTimer);
+    healHideTimer = setTimeout(function () {
+      healPopup.classList.remove('show');
+      healHideTimer = 0;
+    }, 1100);
+    playHealSound();
   }
 
   // ----------------------------------------------------------
@@ -4270,11 +4353,29 @@ var smokeParticles = [];
 
     var isMelee = local.current === 'melee';
     weaponName.textContent = isMelee ? WEAPONS[local.melee].name : WEAPONS[currentRangedId()].name;
-    ammoText.textContent = isMelee ? '∞' : (local.ammo + ' / ' + WEAPONS[currentRangedId()].mag);
-    if (!isMelee) {
-      ammoText.classList.toggle('low', local.ammo <= WEAPONS[currentRangedId()].mag * 0.25);
-    } else {
+    if (isMelee) {
+      ammoText.textContent = '—';
       ammoText.classList.remove('low');
+    } else {
+      // 弹匣 / 备弹。备弹用小字灰色，和弹匣数拉开层级：交火中要读的是前面那个数，
+      // 后面那个是「打完这匣之后还有没有」，不该抢注意力。
+      var rw = WEAPONS[currentRangedId()];
+      ammoText.textContent = local.ammo + ' ';
+      var rs = document.createElement('span');
+      rs.className = 'ammo-reserve' + (local.reserve <= 0 ? ' empty' : '');
+      rs.textContent = '/ ' + local.reserve;
+      ammoText.appendChild(rs);
+      ammoText.classList.toggle('low', local.ammo <= rw.mag * 0.25);
+    }
+    if (throwText) {
+      throwText.textContent = '';
+      var thr = [{ n: '💥', c: local.grenadeCount }, { n: '💨', c: local.smokeCount }];
+      for (var ti = 0; ti < thr.length; ti++) {
+        var sp = document.createElement('span');
+        sp.className = 'th-item' + (thr[ti].c <= 0 ? ' out' : '');
+        sp.textContent = thr[ti].n + ' ' + thr[ti].c;
+        throwText.appendChild(sp);
+      }
     }
     var rlShow = !isMelee && local.reloading;
     reloadTip.style.display = rlShow ? 'block' : 'none';
@@ -4300,7 +4401,9 @@ var smokeParticles = [];
         gap = 5 + Math.min(px, 160) + (triggerDown ? 1.5 : 0);
       }
     } else {
-      var speedFrac = clamp(Math.sqrt(local.vel.x * local.vel.x + local.vel.z * local.vel.z) / 13, 0, 1);
+      // 近战准星靠速度张开。分母跟着降速一起改：还按 13 算的话
+      // 现在最快也只有 7.6/13 = 0.58，准星永远张不开。
+      var speedFrac = clamp(Math.sqrt(local.vel.x * local.vel.x + local.vel.z * local.vel.z) / (SPRINT_SPEED * 1.15), 0, 1);
       gap = 7 + speedFrac * 8;
     }
     crosshair.style.setProperty('--gap', gap.toFixed(1) + 'px');
@@ -4390,9 +4493,9 @@ var smokeParticles = [];
   function updateScoreboard() {
     var rows = [];
     remotePlayers.forEach(function (r) {
-      rows.push({ name: r.name, kills: r.kills, deaths: r.deaths, alive: r.alive, me: false });
+      rows.push({ name: r.name, kills: r.kills, deaths: r.deaths, streak: r.streak || 0, bestStreak: r.bestStreak || 0, alive: r.alive, me: false });
     });
-    rows.push({ name: local.name || '你', kills: local.kills, deaths: local.deaths, alive: local.alive, me: true });
+    rows.push({ name: local.name || '你', kills: local.kills, deaths: local.deaths, streak: local.streak || 0, bestStreak: local.bestStreak || 0, alive: local.alive, me: true });
     rows.sort(function (a, b) {
       if (b.kills !== a.kills) return b.kills - a.kills;
       return a.deaths - b.deaths;
@@ -4409,9 +4512,23 @@ var smokeParticles = [];
       tdAlive.appendChild(document.createTextNode(row.alive ? '存活' : '阵亡'));
       var tdKills = document.createElement('td'); tdKills.textContent = row.kills;
       var tdDeaths = document.createElement('td'); tdDeaths.textContent = row.deaths;
+      // 连杀列：本命连杀（亮）+ 本局最高（灰）。
+      // 本命连杀死一次就归零，单独一个数字信息量太低，所以把「最高」并排给出——
+      // 前者是「现在有多危险」，后者是「这局打得怎么样」。
+      var tdStreak = document.createElement('td');
+      var cur = document.createElement('span');
+      cur.className = 'sb-streak';
+      cur.textContent = row.streak;
+      tdStreak.appendChild(cur);
+      if (row.bestStreak > 0) {
+        var best = document.createElement('span');
+        best.className = 'sb-best';
+        best.textContent = '最高 ' + row.bestStreak;
+        tdStreak.appendChild(best);
+      }
       var tdKD = document.createElement('td');
       tdKD.textContent = row.deaths > 0 ? (row.kills / row.deaths).toFixed(2) : row.kills;
-      tr.appendChild(tdName); tr.appendChild(tdAlive); tr.appendChild(tdKills); tr.appendChild(tdDeaths); tr.appendChild(tdKD);
+      tr.appendChild(tdName); tr.appendChild(tdAlive); tr.appendChild(tdKills); tr.appendChild(tdDeaths); tr.appendChild(tdStreak); tr.appendChild(tdKD);
       scoreBody.appendChild(tr);
     });
   }
@@ -4420,9 +4537,9 @@ var smokeParticles = [];
       if (!leaderboardList) return;
       var rows = [];
       remotePlayers.forEach(function (r) {
-        rows.push({ name: r.name, kills: r.kills, deaths: r.deaths, me: false });
+        rows.push({ name: r.name, kills: r.kills, deaths: r.deaths, streak: r.streak || 0, me: false });
       });
-      rows.push({ name: local.name || '你', kills: local.kills, deaths: local.deaths, me: true });
+      rows.push({ name: local.name || '你', kills: local.kills, deaths: local.deaths, streak: local.streak || 0, me: true });
       rows.sort(function (a, b) {
         if (b.kills !== a.kills) return b.kills - a.kills;
         return a.deaths - b.deaths;
@@ -4448,6 +4565,14 @@ var smokeParticles = [];
         div.appendChild(nameSpan);
         div.appendChild(killsSpan);
         div.appendChild(deathsSpan);
+        // 只给正在连杀（≥2）的人挂标记。挂 0/1 的话八行里全是「1 连」，
+        // 反而看不出谁真的在滚雪球。
+        if (row.streak >= 2) {
+          var streakSpan = document.createElement('span');
+          streakSpan.className = 'lb-streak';
+          streakSpan.textContent = '🔥' + row.streak;
+          div.appendChild(streakSpan);
+        }
         leaderboardList.appendChild(div);
       });
     }
@@ -4516,8 +4641,13 @@ var smokeParticles = [];
           local.ranged = local.primary;
           local.ammoPrimary = WEAPONS[local.primary].mag;
           local.ammoSecondary = WEAPONS.pistol.mag;
+          local.reservePrimary = (typeof msg.reservePrimary === 'number') ? msg.reservePrimary : WEAPONS[local.primary].reserve;
+          local.reserveSecondary = (typeof msg.reserveSecondary === 'number') ? msg.reserveSecondary : WEAPONS.pistol.reserve;
+          local.grenadeCount = (typeof msg.grenadeCount === 'number') ? msg.grenadeCount : GRENADE_MAX;
+          local.smokeCount = (typeof msg.smokeCount === 'number') ? msg.smokeCount : SMOKE_MAX;
         local.hp = local.maxHp;
         local.ammo = WEAPONS[local.ranged].mag;
+        local.reserve = local.reservePrimary;
         local.melee = selectedMelee;
         local.ranged = selectedRanged;
         local.current = 'ranged';
@@ -4551,7 +4681,18 @@ var smokeParticles = [];
             break;
         case 'kill':
         addKillFeed(msg);
-        if (msg.victimId === local.id) { respawnCountdownEnd = Date.now() + 3000; playDeathSound(); }
+        if (msg.victimId === local.id) {
+          respawnCountdownEnd = Date.now() + 3000;
+          playDeathSound();
+          // 死亡时立刻把横幅收掉。服务端已经把 streak 归零了，
+          // 让"神之领域"停在屏幕上跨过死亡画面很怪。
+          if (streakBanner) streakBanner.classList.remove('show');
+        }
+        if (msg.killerId === local.id) {
+          // 只在跨过阈值的那一杀有 streakLabel（服务端判定），所以这里不用自己去比。
+          if (msg.streakLabel) showStreakBanner(msg.streakLabel, msg.streak);
+          if (msg.healed > 0) showHealPopup(msg.healed);
+        }
         break;
       case 'reload':
         // 别人开始换弹：起第三人称换弹动画。
@@ -4582,6 +4723,8 @@ var smokeParticles = [];
         if (!local.alive) { triggerDown = false; ads = false; if (scopeOverlay) scopeOverlay.style.display = 'none'; crosshair.classList.remove('hidden'); if (wasAlive) respawnCountdownEnd = Date.now() + 3000; }
         local.kills = pd.kills;
         local.deaths = pd.deaths;
+        if (typeof pd.streak === 'number') local.streak = pd.streak;
+        if (typeof pd.bestStreak === 'number') local.bestStreak = pd.bestStreak;
         local.ammo = pd.ammo;
         local.reloading = pd.reloading;
         local.current = pd.current;
@@ -4591,6 +4734,11 @@ var smokeParticles = [];
           if (pd.secondary) local.secondary = pd.secondary;
           if (typeof pd.ammoPrimary === 'number') local.ammoPrimary = pd.ammoPrimary;
           if (typeof pd.ammoSecondary === 'number') local.ammoSecondary = pd.ammoSecondary;
+          if (typeof pd.reserve === 'number') local.reserve = pd.reserve;
+          if (typeof pd.reservePrimary === 'number') local.reservePrimary = pd.reservePrimary;
+          if (typeof pd.reserveSecondary === 'number') local.reserveSecondary = pd.reserveSecondary;
+          if (typeof pd.grenadeCount === 'number') local.grenadeCount = pd.grenadeCount;
+          if (typeof pd.smokeCount === 'number') local.smokeCount = pd.smokeCount;
         if (!local.initialized) {
           local.initialized = true;
           if (pd.pos) local.pos.set(pd.pos.x, pd.pos.y, pd.pos.z);
@@ -4616,6 +4764,8 @@ var smokeParticles = [];
           if (pd.secondary) r.secondary = pd.secondary;
         r.kills = pd.kills;
         r.deaths = pd.deaths;
+        if (typeof pd.streak === 'number') r.streak = pd.streak;
+        if (typeof pd.bestStreak === 'number') r.bestStreak = pd.bestStreak;
         if (r.firstUpdate) {
           r.firstUpdate = false;
           r.renderPos.copy(r.targetPos);
@@ -4699,11 +4849,42 @@ var smokeParticles = [];
       local.ammo = WEAPONS[local.ranged].mag;
         local.ammoPrimary = WEAPONS[local.primary].mag;
         local.ammoSecondary = WEAPONS.pistol.mag;
+        // 补给重置，与服务端 spawn() 保持一致。这里本地先算一遍而不是等快照，
+        // 是为了让复活瞬间的 HUD 就是对的——否则最多 50ms 内会显示上条命
+        // 打空的弹药数，复活后第一眼看到「0 / 0」很容易误判成没子弹。
+        local.reservePrimary = WEAPONS[local.primary].reserve;
+        local.reserveSecondary = WEAPONS.pistol.reserve;
+        local.grenadeCount = GRENADE_MAX;
+        local.smokeCount = SMOKE_MAX;
         local.current = 'primary';
         local.ranged = local.primary;
         local.ammo = local.ammoPrimary;
+        local.reserve = local.reservePrimary;
       local.reloading = false;
-      cancelReloadAnim();     // 重生手上是满弹，上一条命没播完的换弹动画作废
+      // 重生必须把「手上这把武器」的全部状态归零，而不只是作废换弹动画。
+      //
+      // 这里原来只有 cancelReloadAnim()，于是持刀阵亡再重生会出一个错乱状态：
+      // 上面几行已经把 local.current 改回 'primary'（射击逻辑因此走枪械分支，
+      // 能正常开枪），但 vmGunGroup/vmMeleeGroup 的 visible 是由
+      // applyWeaponVisibility() 单独设置的，而它只在 switchWeapon() 里被调用——
+      // 重生这条路径从来没调过。结果就是手上顶着刀的模型却在打枪。
+      // （applyWeaponVisibility 的注释本来就写着「切枪/重生都会走到这儿」，
+      //   是调用点漏了，不是设计如此。）
+      //
+      // 顺带把挥砍与散射/后坐力也清掉：死在挥刀中途的话 swingTime 还在跑、
+      // vmMeleeGroup 停在半个劈砍的姿态上，下条命第一次拿刀就是歪的；
+      // bloom/recoil 不清则准星张开度和抬枪量会跨越死亡继承下来，
+      // 而服务端在 spawn() 里是把 bloom 和 comboStage 都归零的，不清就两边不一致。
+      swingTime = 0;
+      localComboStage = 0;
+      lastLocalMelee = 0;
+      vmMeleeGroup.rotation.set(0, 0, 0);
+      vmMeleeGroup.position.set(0, 0, 0);
+      bloom = 0;
+      recoilPitch = 0; recoilYaw = 0; recoilZ = 0;
+      triggerDown = false;
+      ads = false;
+      applyWeaponVisibility();   // 内部已含 cancelReloadAnim()
       local.vel.set(0, 0, 0);
       if (msg.pos) {
         local.pos.set(msg.pos.x, 0, msg.pos.z);
@@ -4861,27 +5042,33 @@ var smokeParticles = [];
 
     function throwSmoke() {
       if (!gameStarted || !local.alive) return;
+      if (local.smokeCount <= 0) { playDryFireSound(); return; }
       var now = performance.now();
       if (now - lastSmokeTime < 3000) return;
       lastSmokeTime = now;
+      local.smokeCount--;          // 本地先扣，快照会用服务端的值覆盖
       // 只报朝向，弹道由两端各自积分（见 stepThrown）
       send({ t: 'smoke', yaw: aimYaw(), pitch: aimPitch() });
       throwAnim = 0.32;
+      updateHUD();
     }
 
     function throwGrenade() {
       if (!gameStarted || !local.alive) return;
+      if (local.grenadeCount <= 0) { playDryFireSound(); return; }
       var now = performance.now();
       if (now - lastGrenadeTime < 3000) return;
       lastGrenadeTime = now;
+      local.grenadeCount--;
       send({ t: 'grenade', yaw: aimYaw(), pitch: aimPitch() });
       throwAnim = 0.32;
+      updateHUD();
     }
   function switchWeapon(slot) {
     if (!gameStarted) return;
     if (slot === 'melee') { local.current = 'melee'; }
-    else if (slot === 'secondary') { local.current = 'secondary'; local.ranged = local.secondary; local.ammo = local.ammoSecondary; }
-      else if (slot === 'primary') { local.current = 'primary'; local.ranged = local.primary; local.ammo = local.ammoPrimary; }
+    else if (slot === 'secondary') { local.current = 'secondary'; local.ranged = local.secondary; local.ammo = local.ammoSecondary; local.reserve = local.reserveSecondary; }
+      else if (slot === 'primary') { local.current = 'primary'; local.ranged = local.primary; local.ammo = local.ammoPrimary; local.reserve = local.reservePrimary; }
     else return;
     if (triggerDown) { triggerDown = false; send({ t: 'attack', down: false }); }
     ads = false;
@@ -4909,10 +5096,23 @@ var smokeParticles = [];
     reloadAnimT = 0; reloadAnimDur = 0; reloadAnimId = ''; reloadSndStage = 0;
   }
 
-  function startReload() {
+  // auto=true 表示这次换弹不是玩家按 R，而是打空后自动触发的。
+  // 区别只在「备弹为 0 时要不要出声」：自动触发的场合枪声/干响已经响过了，
+  // 再补一声干响会和枪声叠在一起，听着像卡带。
+  function startReload(auto) {
     if (!gameStarted || !local.alive || local.current === 'melee') return;
     var wpn = WEAPONS[local.ranged];
     if (local.reloading || local.ammo >= wpn.mag) return;
+    // 备弹见底：不能进换弹流程。这个判断必须和服务端 handleReload 一致，
+    // 否则本地会播完一整套换弹动作、把 local.ammo 预测成满匣，
+    // 然后被下一个快照打回 0 —— 弹药数会跳一下，看着像丢包。
+    if (local.reserve <= 0) {
+      if (!auto) {
+        var nowDry = performance.now();
+        if (nowDry - lastDrySound > 500) { lastDrySound = nowDry; playDryFireSound(); }
+      }
+      return;
+    }
     local.reloading = true;
     bloom = 0;                 // 换弹期间枪口稳定下来，累积散射清零
     send({ t: 'reload' });
@@ -4926,8 +5126,12 @@ var smokeParticles = [];
     updateHUD();
     setTimeout(function () {
       local.reloading = false;
-      local.ammo = WEAPONS[local.ranged].mag;
-        if (local.current === 'secondary') { local.ammoSecondary = local.ammo; } else { local.ammoPrimary = local.ammo; }
+      // 从备弹里取，取不满就装半匣（服务端 tick 里的换弹完成逻辑同此）
+      var take = Math.min(wpn.mag - local.ammo, local.reserve);
+      local.ammo += take;
+      local.reserve -= take;
+        if (local.current === 'secondary') { local.ammoSecondary = local.ammo; local.reserveSecondary = local.reserve; }
+        else { local.ammoPrimary = local.ammo; local.reservePrimary = local.reserve; }
       updateHUD();
     }, wpn.reloadTime * 1000);
   }
@@ -4940,11 +5144,9 @@ var smokeParticles = [];
     if (local.ammo <= 0) {
         if (!local.reloading) {
           if (now - lastDrySound > 500) { lastDrySound = now; playDryFireSound(); }
-          startReload();
+          startReload(true);     // 干响已经放过了，别让它再补一声
         }
         return;
-      startReload();
-      return;
     }
     lastLocalFire = now;
     local.ammo--;
@@ -5009,7 +5211,7 @@ var smokeParticles = [];
     }
     playShotSound(wpn.id, false);
 
-    if (local.ammo <= 0) startReload();
+    if (local.ammo <= 0) startReload(true);
   }
 
   function localMelee() {
@@ -5040,8 +5242,11 @@ var smokeParticles = [];
     if (!gameStarted || !local.alive || !local.initialized) return;
 
     var adsActive = ads && local.current !== 'melee';
-      var heavyFactor = (local.current !== 'melee' && local.ranged === 'lmg') ? 0.6 : 1;
-    var speed = (keys.run ? 13 : 8) * heavyFactor * (adsActive ? 0.55 : 1);
+    // 速度来自「手上这把武器」的 moveSpeed，不再是一个全局常数 + 机枪特例。
+    // 原来是 (run ? 13 : 8) * (lmg ? 0.6 : 1)，除机枪外所有武器同速。
+    var heldWpn = WEAPONS[local.current === 'melee' ? local.melee : currentRangedId()];
+    var wpnMove = (heldWpn && heldWpn.moveSpeed) || 1;
+    var speed = (keys.run ? SPRINT_SPEED : WALK_SPEED) * wpnMove * (adsActive ? 0.55 : 1);
     var forward = new THREE.Vector3(-Math.sin(local.yaw), 0, -Math.cos(local.yaw));
     var right = new THREE.Vector3(Math.cos(local.yaw), 0, -Math.sin(local.yaw));
     var wish = new THREE.Vector3();
@@ -5209,7 +5414,9 @@ var smokeParticles = [];
       r.group.rotation.y = r.renderYaw;
 
       var speed = Math.sqrt(r.vel.x * r.vel.x + r.vel.z * r.vel.z);
-      var speedFrac = clamp(speed / 8, 0, 1);
+      // 远端玩家的行走动画幅度。分母是「最快的那种走法」——持刀疾跑，
+      // 沿用旧的 8 会让所有人的迈步幅度在半速就饱和，看着都在狂奔。
+      var speedFrac = clamp(speed / (SPRINT_SPEED * 1.15), 0, 1);
 
       if (r.alive) {
         r.deadT = Math.max(0, r.deadT - dt * 3);
@@ -5709,13 +5916,5 @@ var smokeParticles = [];
   bindMenu();
   updateHUD();
   animate();
-
-  // ---- 临时视觉检查钩子（打磨完就删）----
-  window.__DBG = {
-    THREE: THREE, scene: scene, camera: camera, renderer: renderer,
-    buildGunModel: buildGunModel, buildMeleeModel: buildMeleeModel,
-    createRemotePlayer: createRemotePlayer, buildEnvironment: buildEnvironment,
-    WEAPONS: WEAPONS
-  };
 
 })();
