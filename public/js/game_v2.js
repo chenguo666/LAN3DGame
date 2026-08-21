@@ -4873,10 +4873,12 @@ var smokeParticles = [];
     if (isLocal) {
       if ((msg.hitPlayers && msg.hitPlayers.length > 0) ||
           (msg.hitDummies && msg.hitDummies.length > 0)) {
-        // 从所有命中玩家里找出最高级别的部位，用作命中标记
+        // 从所有命中玩家里找出最高级别的部位，用作命中标记。
+        // 只打中靶子时 hitPlayers 是空的（重击现在也会命中靶子），
+        // 此时 bestZone 保持 null，showHitmarker 走默认标记。
         var rank = { head: 4, torso: 3, leg: 2, arm: 1 };
         var bestZone = null;
-        if (msg.hitZones) {
+        if (msg.hitZones && msg.hitPlayers) {
           for (var i = 0; i < msg.hitPlayers.length; i++) {
             var z = msg.hitZones[msg.hitPlayers[i]];
             if (z && (bestZone === null || (rank[z] || 0) > (rank[bestZone] || 0))) bestZone = z;

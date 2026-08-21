@@ -1430,45 +1430,26 @@ class Game {
     });
   }
 
-  meleeAttack(p, yaw, pitch) {
-    const now = Date.now();
-    const wpn = WEAPONS[p.melee];
-    const combo = MELEE_COMBO[p.melee] || MELEE_COMBO.knife;
-
-    // 重击前摇期间不接受轻击：重击是承诺出去的一刀，前摇中塞轻击会把
-    // 两套判定叠在同一段时间里（轻击立刻结算 + 前摇结束又结算一次），
-    // 客户端 localMelee 也有同一条检查，两边必须一致否则动作和伤害错位。
-    if (p.heavyStrikeAt) return;
-
-    // 这一刀是第几段：窗口内接续，超时从头。规则和客户端 localMelee 逐字一致。
-    // 冷却按**上一段**的 cd 倍率算——收尾重砍之后要等更久才能再起手。
-    let stage = 0;
-    if (p.lastMelee && now - p.lastMelee <= MELEE_COMBO_WINDOW) {
-      stage = (p.comboStage + 1) % combo.length;
-    }
-    const prev = combo[p.comboStage] || combo[0];
-    if (now - p.lastMelee < wpn.cooldown * prev.cd) return;
-    p.lastMelee = now;
-    p.comboStage = stage;
-
-    const step = combo[stage];
-    const range = wpn.range * (step.rngK || 1);
-    // arcDot 是命中所需的最小 dot：arcK > 1 收窄扇区，< 1 放宽。
-    const arcDot = clamp(wpn.arcDot * (step.arcK || 1), -1, 1);
-    const baseDmg = wpn.damage * (step.dmg || 1);
-
+  // 近战候选目标收集：测距 → 水平扇区 → 掩体遮挡 → 部位判定。
+  // 轻击（meleeAttack）与重击（heavyAttack）共用这一份几何，两者只在
+  // 「伤害怎么算」和「range/arcDot 从哪张表取」上不同。
+  //
+  // 为什么必须共用：这段判定原先在轻击和重击里各写了一遍，而重击那份
+  // 漏掉了 this.dummies —— 于是对着练枪靶子重击永远是 0 伤害、没有命中
+  // 反馈。轻击那边的注释本来就写着「复制一份几何判定给靶子的话，两份
+  // 必然各自演化，改一处忘一处」，重击就是被复制出去又走岔了的那一份。
+  // 修法不是给重击补一行靶子遍历，而是让它们没有第二份可以走岔。
+  //
+  // 返回 [{ target, zone, mult }]：命中与否完全由这里决定，调用方只负责
+  // 把 mult 乘进自己的基础伤害、并按 isDummy 分流到 damage/damageDummy。
+  meleeTargets(p, yaw, pitch, range, arcDot) {
     const dir = normalize(forwardFromYawPitch(yaw, pitch));
     // 近战扇区是**水平**的，所以要用 dir 的水平投影再归一化。
     const fh = Math.hypot(dir.x, dir.z);
     const fx = fh > 1e-6 ? dir.x / fh : 0;
     const fz = fh > 1e-6 ? dir.z / fh : 0;
-    const hitPlayers = [];
-    const hitDummies = [];
-    // 每个命中者的部位，用于击杀提示
-    const hitZones = {};
 
     // 靶子和玩家走同一套测距/扇区/遮挡判定，所以合并成一个候选表遍历。
-    // 复制一份几何判定给靶子的话，两份必然各自演化，改一处忘一处。
     const targets = [];
     for (const q of this.players.values()) {
       if (q === p || !q.joined || !q.alive) continue;
@@ -1476,6 +1457,7 @@ class Game {
     }
     for (const dm of this.dummies) if (dm.alive) targets.push(dm);
 
+    const hits = [];
     for (const q of targets) {
       const dx = q.pos.x - p.pos.x;
       const dz = q.pos.z - p.pos.z;
@@ -1503,18 +1485,56 @@ class Game {
       // 用已有的 raycastPlayerZones，但 y 方向是水平的（rayDir.y = 0），
       // 这样命中哪个部位完全由「攻击方眼睛高度」和「目标各部位的竖直区间」决定，
       // 符合直觉——蹲着砍腿、站着砍胸、跳起来劈头。
+      // 射线没打中任何部位时兜底记 torso：几何上已经判定在范围+扇区内了，
+      // 不能因为部位求交的边界误差把这一刀吞掉。
       const zh = raycastPlayerZones(origin, rayDir, q, dist + PLAYER_RADIUS);
-      const zone = zh ? zh.zone : 'torso';
-      const mult = zh ? zh.mult : 1.0;
-      const amount = Math.round(baseDmg * mult);
+      hits.push({ target: q, zone: zh ? zh.zone : 'torso', mult: zh ? zh.mult : 1.0 });
+    }
+    return hits;
+  }
 
+  meleeAttack(p, yaw, pitch) {
+    const now = Date.now();
+    const wpn = WEAPONS[p.melee];
+    const combo = MELEE_COMBO[p.melee] || MELEE_COMBO.knife;
+
+    // 重击前摇期间不接受轻击：重击是承诺出去的一刀，前摇中塞轻击会把
+    // 两套判定叠在同一段时间里（轻击立刻结算 + 前摇结束又结算一次），
+    // 客户端 localMelee 也有同一条检查，两边必须一致否则动作和伤害错位。
+    if (p.heavyStrikeAt) return;
+
+    // 这一刀是第几段：窗口内接续，超时从头。规则和客户端 localMelee 逐字一致。
+    // 冷却按**上一段**的 cd 倍率算——收尾重砍之后要等更久才能再起手。
+    let stage = 0;
+    if (p.lastMelee && now - p.lastMelee <= MELEE_COMBO_WINDOW) {
+      stage = (p.comboStage + 1) % combo.length;
+    }
+    const prev = combo[p.comboStage] || combo[0];
+    if (now - p.lastMelee < wpn.cooldown * prev.cd) return;
+    p.lastMelee = now;
+    p.comboStage = stage;
+
+    const step = combo[stage];
+    const range = wpn.range * (step.rngK || 1);
+    // arcDot 是命中所需的最小 dot：arcK > 1 收窄扇区，< 1 放宽。
+    const arcDot = clamp(wpn.arcDot * (step.arcK || 1), -1, 1);
+    const baseDmg = wpn.damage * (step.dmg || 1);
+
+    const hitPlayers = [];
+    const hitDummies = [];
+    // 每个命中者的部位，用于击杀提示
+    const hitZones = {};
+
+    for (const h of this.meleeTargets(p, yaw, pitch, range, arcDot)) {
+      const q = h.target;
+      const amount = Math.round(baseDmg * h.mult);
       if (q.isDummy) {
         hitDummies.push(q.id);
         this.damageDummy(q, amount, null);
       } else {
         hitPlayers.push(q.id);
-        hitZones[q.id] = zone;
-      this.damage(q, p, wpn, amount, zone);
+        hitZones[q.id] = h.zone;
+        this.damage(q, p, wpn, amount, h.zone);
       }
     }
 
@@ -1529,7 +1549,7 @@ class Game {
     });
   }
 
-  // 重击判定。与轻击（meleeAttack）共享部位判定与掩体逻辑，但：
+  // 重击判定。与轻击（meleeAttack）共享 meleeTargets 的几何判定，但：
   //   - 伤害走 MELEE_HEAVY 的绝对伤害（乘部位倍率）
   //   - 范围/扇区走 MELEE_HEAVY 的 rngK/arcK
   //   - 广播带 heavy:true，客户端据此播重击弧线而不是连段弧线
@@ -1545,43 +1565,23 @@ class Game {
     p.comboStage = 0;
     p.lastMelee = 0;
 
-    const dir = normalize(forwardFromYawPitch(yaw, pitch));
-    const fh = Math.hypot(dir.x, dir.z);
-    const fx = fh > 1e-6 ? dir.x / fh : 0;
-    const fz = fh > 1e-6 ? dir.z / fh : 0;
     const hitPlayers = [];
+    const hitDummies = [];
     const hitZones = {};
 
-    for (const q of this.players.values()) {
-      if (q === p || !q.joined || !q.alive) continue;
-      const dx = q.pos.x - p.pos.x;
-      const dz = q.pos.z - p.pos.z;
-      const dist = Math.sqrt(dx * dx + dz * dz);
-      if (dist > range + PLAYER_RADIUS) continue;
-      if (Math.abs(q.pos.y - p.pos.y) > 2.5) continue;
-
-      const dot = dist > 0.001 ? (dx / dist) * fx + (dz / dist) * fz : 1;
-      if (dot < arcDot) continue;
-
-      const origin = { x: p.pos.x, y: p.pos.y + PLAYER_EYE, z: p.pos.z };
-      const rayDir = { x: fx, y: 0, z: fz };
-      let blocked = false;
-      for (const box of BOXES) {
-        const min = { x: box.x - box.w / 2, y: 0, z: box.z - box.d / 2 };
-        const max = { x: box.x + box.w / 2, y: box.h, z: box.z + box.d / 2 };
-        const t = rayAABB(origin, rayDir, min, max);
-        if (t !== null && t < dist) { blocked = true; break; }
+    // 走和轻击同一份 meleeTargets：靶子因此和玩家一样会被重击打到。
+    // 这里原先是一份独立的遍历，且只扫 this.players —— 对靶子重击永远 0 伤害。
+    for (const h of this.meleeTargets(p, yaw, pitch, range, arcDot)) {
+      const q = h.target;
+      const amount = Math.round(baseDmg * h.mult);
+      if (q.isDummy) {
+        hitDummies.push(q.id);
+        this.damageDummy(q, amount, null);
+      } else {
+        hitPlayers.push(q.id);
+        hitZones[q.id] = h.zone;
+        this.damage(q, p, wpn, amount, h.zone);
       }
-      if (blocked) continue;
-
-      const zh = raycastPlayerZones(origin, rayDir, q, dist + PLAYER_RADIUS);
-      const zone = zh ? zh.zone : 'torso';
-      const mult = zh ? zh.mult : 1.0;
-      const amount = Math.round(baseDmg * mult);
-
-      hitPlayers.push(q.id);
-      hitZones[q.id] = zone;
-      this.damage(q, p, wpn, amount, zone);
     }
 
     this.broadcast({
@@ -1591,30 +1591,11 @@ class Game {
       stage: 0,
       heavy: true,
       hitPlayers,
+      // hitDummies 必须带上：客户端 handleMeleeEvent 靠它决定要不要出命中标记，
+      // 缺这个字段的话就算伤害进去了，打靶子也依然是「没有任何反馈」。
+      hitDummies,
       hitZones,
     });
-  }
-
-  // 靶子挨打。刻意**不**走 damage()：靶子不进击杀数、不进连杀、不给回血、
-  // 不进击杀提示。练枪的东西一旦能刷战绩，排行榜立刻失去意义。
-  // 返回本次是否打倒，供调用方决定要不要给额外反馈。
-  damageDummy(dm, amount, zone) {
-    if (!dm.alive) return false;
-    dm.hp -= amount;
-    const dead = dm.hp <= 0;
-    if (dead) {
-      dm.hp = 0;
-      dm.alive = false;
-      dm.resetAt = Date.now() + DUMMY_RESET;
-    }
-    this.broadcast({
-      t: 'dummyHit', id: dm.id, hp: dm.hp, dmg: amount, zone: zone || null, dead,
-      // 打倒时把复位时长一起给出去，客户端拿它画倒地后的复位进度条。
-      // 不让客户端自己抄一份 DUMMY_RESET —— 这种两端各存一份的常量，
-      // 改一处忘一处的时候进度条会走完了人还躺着（THROW_GRAVITY 那组就是反例）。
-      resetIn: dead ? DUMMY_RESET : 0,
-    });
-    return dead;
   }
 
   // 靶子挨打。刻意**不**走 damage()：靶子不进击杀数、不进连杀、不给回血、
