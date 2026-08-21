@@ -85,6 +85,17 @@ const HIT_BROAD_R = 1.06;
 // 部位中文名，只用于击杀提示
 const ZONE_LABEL = { head: '头部', torso: '躯干', arm: '手臂', leg: '腿部' };
 
+// 靶子的上线形式。位置/朝向是常量，但新加入的客户端得知道它们在哪，
+// 所以整份都发——十个靶子一共几百字节，只在 join 时发一次。
+function dummyWire(d) {
+  return {
+    id: d.id, pos: d.pos, yaw: d.yaw, hp: d.hp, maxHp: DUMMY_HP, alive: d.alive,
+    // 中途进来时如果某个靶子正躺着，客户端得知道还剩多久才立起来，
+    // 否则那条复位进度条只能从 0 重新走一遍，读出来的时间是错的。
+    resetIn: d.alive ? 0 : Math.max(0, d.resetAt - Date.now()),
+  };
+}
+
 // 蹲下时整个命中模型的整体下移量（米）。站姿视线 1.55、蹲姿视线 0.80，
 // 差 0.75；这里取 0.75 让判定与客户端视觉一致——蹲下躲爆头的意义在于
 // 头球跟着压到 1.55 以下，平视打过去的弹会先落在躯干/手臂上。
@@ -191,7 +202,7 @@ const WEAPONS = {
   // 净增长是负的，于是 p.bloom 在 0 和 0.0035 之间原地弹跳，永远碰不到 bloomMax。
   // 连带把 recoilRamp 也废了 —— 它拿 bloom/bloomMax 当「连了多久」的进度，恒为 0。
   // 现在按「连打 N 发到上限」反解：bloom = bloomDecay×cooldown/1000 + bloomMax/N。
-  // N：手枪 6、霰弹 4、步枪 12、狙 5、连狙 5、机枪 25。
+  // N：手枪 6、霰弹 4、步枪 12、冲锋枪 14、狙 5、连狙 5、机枪 25。
   // 慢射速的两把（霰弹 900ms / 狙 1400ms）光调 bloom 不够：回落量本身就超过 bloomMax，
   // 无论 bloom 多大都攒不起来，所以同时放慢它们的 bloomDecay（狙还抬了 bloomMax）。
   pistol: {
@@ -227,6 +238,23 @@ const WEAPONS = {
     hipSpread: 0.034, recoil: 0.0090, recoilH: 0.0038, recoilRamp: 1.30,
     moveSpeed: 1.00,          // 基准
     color: 0x222222,
+  },
+  smg: {
+    id: 'smg', name: '冲锋枪', type: 'ranged',
+    // 定位是「近身机动」，和步枪的分工靠**射速换射程**而不是单纯的强弱：
+    // 15 伤害躯干七枪，70ms 一发 → 击杀耗时 420ms，比步枪（19×6×105 = 525ms）更快，
+    // 代价是射程只有 65m、单发散布 0.008（步枪 0.005），二十米开外就压不住人。
+    damage: 15, mag: 30, reserve: 150, cooldown: 70, range: 65,
+    pellets: 1, spread: 0.008, reloadTime: 1.5, auto: true,
+    // N 取 14（一梭子 30 发的前半段就打满上限）：
+    // bloom = 0.060×0.070 + 0.050/14 = 0.0078，满足 bloom > bloomDecay×cooldown/1000。
+    bloom: 0.0078, bloomMax: 0.050, bloomDecay: 0.060,
+    // 移动/腰射惩罚是全枪最低的一档（比手枪还低）——冲锋枪的全部意义就在于
+    // 「边跑边打」，这两个数一旦按步枪给，它就只是一把射程更短的步枪。
+    moveSpread: 0.013, airSpread: 0.024, adsSpread: 0.50,
+    hipSpread: 0.018, recoil: 0.0072, recoilH: 0.0044, recoilRamp: 1.45,
+    moveSpeed: 1.10,          // 全枪最快
+    color: 0x2d2f33,
   },
     awp: {
       id: 'awp', name: '狙击步枪', type: 'ranged',
@@ -377,6 +405,31 @@ const SPAWNS = [
   { x: 0, z: -40 }, { x: 0, z: 40 }, { x: -40, z: 0 }, { x: 40, z: 0 },
   { x: -40, z: -40 }, { x: 40, z: 40 }, { x: -40, z: 40 }, { x: 40, z: -40 },
   { x: 0, z: -30 }, { x: 0, z: 30 }, { x: -30, z: 0 }, { x: 30, z: 0 },
+];
+
+// ---------------------------------------------------------------
+// 练枪靶子
+//
+// 靶子是**服务端实体**，不是客户端摆的装饰。这样它就能走 raycastPlayerZones
+// 那一套和真人完全相同的分部位求交：练枪最需要的正是「刚才那发到底算头还是算肩」，
+// 客户端自己造一套判定的话，练出来的手感和实战对不上，靶子反而有害。
+//
+// 位置：北侧边缘一整排。这一带 z<-38 除了出生点 (0,-40) 之外是空的
+// （BOXES 最外圈只到 |z|=35，防爆墙内壁在 z=-46.75），所以一排靶子既不挡掩体
+// 也不堵路。x 刻意跳过 0：出生点正在 (0,-40)，靶子摆在 x=0 会顶着人脸。
+// 靶心朝场内（yaw=0 即朝 -z，所以要朝 +z 得转 180°，见 DUMMY_YAW）。
+const DUMMY_Z = -43.5;
+// 客户端模型的正面朝 -z，yaw 绕 y 轴。要让靶子面朝场内（+z）就是转半圈。
+const DUMMY_YAW = Math.PI;
+const DUMMY_HP = 150;
+// 打爆后多久自己立回来。太短会变成「无限沙包」，太长又要站着等，
+// 3 秒刚好够走回射击位重新架枪。
+const DUMMY_RESET = 3000;
+const DUMMY_SPOTS = [
+  { x: -27, z: DUMMY_Z }, { x: -21, z: DUMMY_Z }, { x: -15, z: DUMMY_Z },
+  { x: -9, z: DUMMY_Z }, { x: -3, z: DUMMY_Z }, { x: 3, z: DUMMY_Z },
+  { x: 9, z: DUMMY_Z }, { x: 15, z: DUMMY_Z }, { x: 21, z: DUMMY_Z },
+  { x: 27, z: DUMMY_Z },
 ];
 
 // ---------------------------------------------------------------
@@ -759,6 +812,17 @@ class Game {
     this.players = new Map(); // id -> player
       this.explosions = [];
       this.smokes = [];
+    // 练枪靶子。id 从 1 起（不是 0）：客户端那边到处是 `if (tr.hitDummy)` 这种
+    // 真值判断，0 号会被当成"没打中"。
+    this.dummies = DUMMY_SPOTS.map((s, i) => ({
+      id: i + 1,
+      isDummy: true,       // 近战/爆炸的候选表里玩家和靶子混在一起，靠这个分流
+      pos: { x: s.x, y: 0, z: s.z },
+      yaw: DUMMY_YAW,
+      hp: DUMMY_HP,
+      alive: true,
+      resetAt: 0,
+    }));
     this.nextId = 1;
     this.timer = setInterval(() => this.tick(), TICK_RATE);
   }
@@ -929,6 +993,9 @@ class Game {
           grenadeCount: p.grenadeCount,
           smokeCount: p.smokeCount,
         ranged: p.ranged,
+        // 靶子的位置是常量，但状态（血量/是否已被打倒）不是，
+        // 所以中途进来的人必须拿到当前快照，不能只靠后续的 dummyHit 推。
+        dummies: this.dummies.map(dummyWire),
       });
     this.broadcast({ t: 'join', id: p.id, name: p.name });
   }
@@ -1158,8 +1225,12 @@ class Game {
         this.explosions.splice(i, 1);
         this.broadcast({ t: 'explosion', pos: ex.pos });
         const owner = this.players.get(ex.owner);
-        for (const q of this.players.values()) {
-          if (!q.joined || !q.alive) continue;
+        // 玩家和靶子合成一张候选表：衰减、遮挡减半的算法完全一样，
+        // 只有最后落到谁身上不同。
+        const blast = [];
+        for (const q of this.players.values()) if (q.joined && q.alive) blast.push(q);
+        for (const dm of this.dummies) if (dm.alive) blast.push(dm);
+        for (const q of blast) {
           // 手雷现在真的会落在地面/箱顶上，所以用三维距离；只算平面距离的话
           // 扔到二层箱顶的雷会把楼下的人一起炸掉。
           const dx = q.pos.x - ex.pos.x;
@@ -1179,8 +1250,19 @@ class Game {
             if (t !== null && t < seg - 0.3) { dmg *= 0.45; break; }
           }
           dmg = Math.round(dmg);
-          if (dmg > 0) this.damage(q, owner, { id: 'grenade', name: '手雷' }, dmg);
+          if (dmg <= 0) continue;
+          if (q.isDummy) this.damageDummy(q, dmg, null);
+          else this.damage(q, owner, { id: 'grenade', name: '手雷' }, dmg);
         }
+      }
+
+      // 靶子自动立回来
+      for (const dm of this.dummies) {
+        if (dm.alive || now < dm.resetAt) continue;
+        dm.alive = true;
+        dm.hp = DUMMY_HP;
+        dm.resetAt = 0;
+        this.broadcast({ t: 'dummyReset', id: dm.id, hp: dm.hp });
       }
 
     this.broadcastSnapshot();
@@ -1257,12 +1339,14 @@ class Game {
     const baseDir = normalize(forwardFromYawPitch(yaw, pitch));
     const tracers = [];
     const hitPlayers = [];
+    const hitDummies = [];
 
     for (let i = 0; i < wpn.pellets; i++) {
       const d = spreadDir(baseDir, spread);
 
       let bestT = wpn.range;
       let hitPlayer = null;
+      let hitDummy = null;
       let hitZone = null;
       let hitMult = 1;
 
@@ -1274,6 +1358,7 @@ class Game {
         if (t !== null && t < bestT) {
           bestT = t;
           hitPlayer = null;
+          hitDummy = null;
           hitZone = null;
         }
       }
@@ -1285,6 +1370,22 @@ class Game {
         if (h) {
           bestT = h.t;
           hitPlayer = q.id;
+          hitDummy = null;
+          hitZone = h.zone;
+          hitMult = h.mult;
+        }
+      }
+
+      // 靶子（同一套分部位判定，所以爆头倍率和打真人完全一致）。
+      // 放在玩家之后：两者都按 bestT 逐步收紧，谁更近谁最终留在 best 里，
+      // 顺序不影响结果，只是省一次比较。
+      for (const dm of this.dummies) {
+        if (!dm.alive) continue;
+        const h = raycastPlayerZones(origin, d, dm, bestT);
+        if (h) {
+          bestT = h.t;
+          hitPlayer = null;
+          hitDummy = dm.id;
           hitZone = h.zone;
           hitMult = h.mult;
         }
@@ -1297,6 +1398,7 @@ class Game {
           z: origin.z + d.z * bestT,
         },
         hitPlayer,
+        hitDummy,
         hitZone,
       });
 
@@ -1308,6 +1410,12 @@ class Game {
           // 留小数会让同一次开火的总伤害随命中分布出现看不懂的零点几差。
           this.damage(victim, p, wpn, Math.max(1, Math.round(wpn.damage * hitMult)), hitZone);
         }
+      } else if (hitDummy !== null) {
+        const dm = this.dummies.find((x) => x.id === hitDummy);
+        if (dm) {
+          if (!hitDummies.includes(hitDummy)) hitDummies.push(hitDummy);
+          this.damageDummy(dm, Math.max(1, Math.round(wpn.damage * hitMult)), hitZone);
+        }
       }
     }
 
@@ -1318,6 +1426,7 @@ class Game {
       origin,
       tracers,
       hitPlayers,
+      hitDummies,
     });
   }
 
@@ -1354,11 +1463,20 @@ class Game {
     const fx = fh > 1e-6 ? dir.x / fh : 0;
     const fz = fh > 1e-6 ? dir.z / fh : 0;
     const hitPlayers = [];
+    const hitDummies = [];
     // 每个命中者的部位，用于击杀提示
     const hitZones = {};
 
+    // 靶子和玩家走同一套测距/扇区/遮挡判定，所以合并成一个候选表遍历。
+    // 复制一份几何判定给靶子的话，两份必然各自演化，改一处忘一处。
+    const targets = [];
     for (const q of this.players.values()) {
       if (q === p || !q.joined || !q.alive) continue;
+      targets.push(q);
+    }
+    for (const dm of this.dummies) if (dm.alive) targets.push(dm);
+
+    for (const q of targets) {
       const dx = q.pos.x - p.pos.x;
       const dz = q.pos.z - p.pos.z;
       const dist = Math.sqrt(dx * dx + dz * dz);
@@ -1390,9 +1508,14 @@ class Game {
       const mult = zh ? zh.mult : 1.0;
       const amount = Math.round(baseDmg * mult);
 
-      hitPlayers.push(q.id);
-      hitZones[q.id] = zone;
+      if (q.isDummy) {
+        hitDummies.push(q.id);
+        this.damageDummy(q, amount, null);
+      } else {
+        hitPlayers.push(q.id);
+        hitZones[q.id] = zone;
       this.damage(q, p, wpn, amount, zone);
+      }
     }
 
     this.broadcast({
@@ -1401,6 +1524,7 @@ class Game {
       weaponId: wpn.id,
       stage,
       hitPlayers,
+      hitDummies,
       hitZones,
     });
   }
@@ -1469,6 +1593,50 @@ class Game {
       hitPlayers,
       hitZones,
     });
+  }
+
+  // 靶子挨打。刻意**不**走 damage()：靶子不进击杀数、不进连杀、不给回血、
+  // 不进击杀提示。练枪的东西一旦能刷战绩，排行榜立刻失去意义。
+  // 返回本次是否打倒，供调用方决定要不要给额外反馈。
+  damageDummy(dm, amount, zone) {
+    if (!dm.alive) return false;
+    dm.hp -= amount;
+    const dead = dm.hp <= 0;
+    if (dead) {
+      dm.hp = 0;
+      dm.alive = false;
+      dm.resetAt = Date.now() + DUMMY_RESET;
+    }
+    this.broadcast({
+      t: 'dummyHit', id: dm.id, hp: dm.hp, dmg: amount, zone: zone || null, dead,
+      // 打倒时把复位时长一起给出去，客户端拿它画倒地后的复位进度条。
+      // 不让客户端自己抄一份 DUMMY_RESET —— 这种两端各存一份的常量，
+      // 改一处忘一处的时候进度条会走完了人还躺着（THROW_GRAVITY 那组就是反例）。
+      resetIn: dead ? DUMMY_RESET : 0,
+    });
+    return dead;
+  }
+
+  // 靶子挨打。刻意**不**走 damage()：靶子不进击杀数、不进连杀、不给回血、
+  // 不进击杀提示。练枪的东西一旦能刷战绩，排行榜立刻失去意义。
+  // 返回本次是否打倒，供调用方决定要不要给额外反馈。
+  damageDummy(dm, amount, zone) {
+    if (!dm.alive) return false;
+    dm.hp -= amount;
+    const dead = dm.hp <= 0;
+    if (dead) {
+      dm.hp = 0;
+      dm.alive = false;
+      dm.resetAt = Date.now() + DUMMY_RESET;
+    }
+    this.broadcast({
+      t: 'dummyHit', id: dm.id, hp: dm.hp, dmg: amount, zone: zone || null, dead,
+      // 打倒时把复位时长一起给出去，客户端拿它画倒地后的复位进度条。
+      // 不让客户端自己抄一份 DUMMY_RESET —— 这种两端各存一份的常量，
+      // 改一处忘一处的时候进度条会走完了人还躺着（THROW_GRAVITY 那组就是反例）。
+      resetIn: dead ? DUMMY_RESET : 0,
+    });
+    return dead;
   }
 
   // zone 是命中部位（'head'/'torso'/'arm'/'leg'），只用于击杀提示；
