@@ -25,11 +25,11 @@
   var WALK_SPEED = 4.2;         // 原 8：太快，掩体间的推进没有暴露时间可言
   var SPRINT_SPEED = 6.6;       // 原 13：比人类百米峰值还快
   var WEAPONS = {
-    knife: { id: 'knife', name: '战术匕首', type: 'melee', damage: 30, range: 2.4, cooldown: 380, arcDot: 0.45, moveSpeed: 1.15, color: 0xc0c0c0 },
-    axe: { id: 'axe', name: '消防斧', type: 'melee', damage: 60, range: 3.0, cooldown: 950, arcDot: 0.55, moveSpeed: 0.96, color: 0xcc3333 },
-    katana: { id: 'katana', name: '武士刀', type: 'melee', damage: 40, range: 3.2, cooldown: 560, arcDot: 0.5, moveSpeed: 1.06, color: 0x8a8a8a },
-      kukri: { id: 'kukri', name: '尼泊尔军刀', type: 'melee', damage: 45, range: 2.6, cooldown: 450, arcDot: 0.5, moveSpeed: 1.12, color: 0x9aa0a0 },
-      chainsaw: { id: 'chainsaw', name: '电锯', type: 'melee', damage: 30, range: 2.7, cooldown: 250, arcDot: 0.6, moveSpeed: 0.90, color: 0xff6600 },
+    knife: { id: 'knife', name: '战术匕首', type: 'melee', damage: 30, range: 2.4, cooldown: 320, arcDot: 0.45, moveSpeed: 1.15, color: 0xc0c0c0 },
+    axe: { id: 'axe', name: '消防斧', type: 'melee', damage: 55, range: 3.0, cooldown: 780, arcDot: 0.55, moveSpeed: 0.96, color: 0xcc3333 },
+    katana: { id: 'katana', name: '武士刀', type: 'melee', damage: 45, range: 3.2, cooldown: 480, arcDot: 0.5, moveSpeed: 1.06, color: 0x8a8a8a },
+      kukri: { id: 'kukri', name: '尼泊尔军刀', type: 'melee', damage: 40, range: 2.6, cooldown: 420, arcDot: 0.5, moveSpeed: 1.12, color: 0x9aa0a0 },
+      chainsaw: { id: 'chainsaw', name: '电锯', type: 'melee', damage: 30, range: 2.7, cooldown: 300, arcDot: 0.6, moveSpeed: 0.90, color: 0xff6600 },
     // 散射/后坐力字段（必须与 server.js 的 WEAPONS 表逐字一致，否则准星画的
     // 散射圈和服务端真正判定的散射不是一回事）：
     //   spread 首发锥形散射半角(rad) / bloom 每发累加 / bloomMax 上限 / bloomDecay 每秒回落
@@ -47,7 +47,7 @@
     // 现在按「打满 N 发到上限」反解：bloom = bloomDecay×cooldown/1000 + bloomMax/N。
     // N 取值：手枪 6、霰弹 4、步枪 12、狙 5、连狙 5、机枪 25。
     pistol: { id: 'pistol', name: '手枪', type: 'ranged', damage: 26, mag: 12, reserve: 48, cooldown: 240, range: 90, pellets: 1, spread: 0.006, reloadTime: 1.3, auto: false, bloom: 0.0170, bloomMax: 0.030, bloomDecay: 0.050, moveSpread: 0.012, airSpread: 0.020, adsSpread: 0.55, hipSpread: 0.020, recoil: 0.0130, recoilH: 0.0045, recoilRamp: 0.85, moveSpeed: 1.06, color: 0x444444 },
-    shotgun: { id: 'shotgun', name: '霰弹枪', type: 'ranged', damage: 13, mag: 6, reserve: 24, cooldown: 900, range: 45, pellets: 8, spread: 0.050, reloadTime: 2.3, auto: false, bloom: 0.0440, bloomMax: 0.075, bloomDecay: 0.028, moveSpread: 0.020, airSpread: 0.030, adsSpread: 0.80, hipSpread: 0.016, recoil: 0.0330, recoilH: 0.0080, recoilRamp: 0.55, moveSpeed: 0.96, color: 0x553311 },
+    shotgun: { id: 'shotgun', name: '霰弹枪', type: 'ranged', damage: 18, mag: 8, reserve: 32, cooldown: 700, range: 55, pellets: 10, spread: 0.060, reloadTime: 2.1, auto: false, bloom: 0.0380, bloomMax: 0.070, bloomDecay: 0.032, moveSpread: 0.018, airSpread: 0.028, adsSpread: 0.65, hipSpread: 0.014, recoil: 0.0400, recoilH: 0.0100, recoilRamp: 0.50, moveSpeed: 0.94, color: 0x553311 },
     rifle: { id: 'rifle', name: '突击步枪', type: 'ranged', damage: 19, mag: 30, reserve: 120, cooldown: 105, range: 110, pellets: 1, spread: 0.005, reloadTime: 1.9, auto: true, bloom: 0.0093, bloomMax: 0.042, bloomDecay: 0.055, moveSpread: 0.016, airSpread: 0.028, adsSpread: 0.45, hipSpread: 0.034, recoil: 0.0090, recoilH: 0.0038, recoilRamp: 1.30, moveSpeed: 1.00, color: 0x222222 },
     awp: { id: 'awp', name: '狙击步枪', type: 'ranged', damage: 120, mag: 5, reserve: 20, cooldown: 1400, range: 160, pellets: 1, spread: 0.0004, reloadTime: 2.6, auto: false, bloom: 0.0200, bloomMax: 0.030, bloomDecay: 0.010, moveSpread: 0.030, airSpread: 0.045, adsSpread: 0.15, hipSpread: 0.070, recoil: 0.0460, recoilH: 0.0060, recoilRamp: 0.45, moveSpeed: 0.86, color: 0x1a3a1a },
       dmr: { id: 'dmr', name: '连狙', type: 'ranged', damage: 55, mag: 10, reserve: 40, cooldown: 300, range: 120, pellets: 1, spread: 0.002, reloadTime: 2.1, auto: false, bloom: 0.0150, bloomMax: 0.022, bloomDecay: 0.035, moveSpread: 0.020, airSpread: 0.032, adsSpread: 0.30, hipSpread: 0.046, recoil: 0.0230, recoilH: 0.0050, recoilRamp: 1.00, moveSpeed: 0.93, color: 0x2a4a2a },
@@ -214,19 +214,40 @@
   // rngK 乘在 range 上。server.js 有同一张表，两边必须一致，
   // 否则客户端预测的段号和服务端真正结算的段号会错开，动作和伤害就对不上。
   var MELEE_COMBO_WINDOW = 900;
+  // 轻击（左键）连段。dmg/cd 是**倍率**，乘在 WEAPONS 的基础值上；arcK 乘在 arcDot 上
+  // （arcDot 是命中所需的最小 dot，所以 >1 = 扇区更窄），rngK 乘在 range 上。
+  // server.js 有同一张表，两边必须一致。
+  // 轻击伤害必须压到重击的 25%~75%——轻击是磨血/补刀，重击才是终结手段。
+  // 轻击节奏（基础 cooldown × cd 倍率）按武器类型排在 0.3~0.8 秒一刀：
+  //   电锯 0.30/0.33 · 匕首 0.32/0.32/0.48 · 尼泊尔 0.42/0.55
+  //   武士刀 0.48/0.53/0.70 · 斧 0.78/0.86
   var MELEE_COMBO = {
-    knife: [{ s: 'slashR', dmg: 1.00, cd: 0.58 },
-            { s: 'slashL', dmg: 1.00, cd: 0.58 },
-            { s: 'stab',   dmg: 1.45, cd: 1.30, arcK: 1.35, rngK: 1.15 }],
-    kukri: [{ s: 'slashR', dmg: 1.00, cd: 0.62 },
-            { s: 'slashL', dmg: 1.15, cd: 1.25 }],
-    katana:[{ s: 'slashR',   dmg: 1.00, cd: 0.60 },
-            { s: 'slashL',   dmg: 1.00, cd: 0.60 },
-            { s: 'overhead', dmg: 1.55, cd: 1.35, arcK: 0.85 }],
+    knife: [{ s: 'slashR', dmg: 1.00, cd: 1.00 },
+            { s: 'slashL', dmg: 1.00, cd: 1.00 },
+            { s: 'stab',   dmg: 1.50, cd: 1.50, arcK: 1.35, rngK: 1.15 }],
+    kukri: [{ s: 'slashR', dmg: 1.00, cd: 1.00 },
+            { s: 'slashL', dmg: 1.20, cd: 1.30 }],
+    katana:[{ s: 'slashR',   dmg: 1.00, cd: 1.00 },
+            { s: 'slashL',   dmg: 1.10, cd: 1.10 },
+            { s: 'overhead', dmg: 1.40, cd: 1.45, arcK: 0.85 }],
     axe:   [{ s: 'overhead', dmg: 1.00, cd: 1.00 },
-            { s: 'slashR',   dmg: 1.10, cd: 1.15, arcK: 0.85 }],
+            { s: 'slashR',   dmg: 1.10, cd: 1.10, arcK: 0.85 }],
     chainsaw: [{ s: 'saw',  dmg: 1.00, cd: 1.00 },
-               { s: 'sawB', dmg: 1.00, cd: 1.00 }]
+               { s: 'sawB', dmg: 1.30, cd: 1.10 }]
+  };
+  // 近战重击（右键，带前摇）。与轻击完全独立：
+  //   dmg     重击绝对伤害（不乘轻击基础值）——重击两下必须 >100，所以 dmg 都 ≥ 50
+  //   windup  前摇秒数——右键一下就进前摇，走完由 updateLocal 自动挥出
+  //   cd      重击收势秒数（从结算起算）——一刀总时长 = windup + cd
+  //   s       挥砍弧线风格（对齐 MELEE_ARC）
+  //   rngK/arcK 范围与扇区倍率
+  // server.js 有同一张表，两边必须逐字一致。
+  var MELEE_HEAVY = {
+    knife:    { dmg: 60,  windup: 0.45, cd: 0.55, s: 'stab',     rngK: 1.15, arcK: 1.35 },
+    kukri:    { dmg: 66,  windup: 0.60, cd: 0.70, s: 'overhead', rngK: 1.10, arcK: 0.90 },
+    katana:   { dmg: 66,  windup: 0.70, cd: 0.75, s: 'overhead', rngK: 1.10, arcK: 0.85 },
+    axe:      { dmg: 80,  windup: 0.90, cd: 0.95, s: 'overhead', rngK: 1.05, arcK: 0.85 },
+    chainsaw: { dmg: 62,  windup: 0.65, cd: 0.75, s: 'sawB',     rngK: 1.05, arcK: 0.90 }
   };
   function meleeStep(id, stage) {
     var c = MELEE_COMBO[id] || MELEE_COMBO.knife;
@@ -343,6 +364,8 @@ var localNameTag = document.getElementById('localNameTag');
   var crosshair = document.getElementById('crosshair');
   var scopeOverlay = document.getElementById('scopeOverlay');
   var hitmarker = document.getElementById('hitmarker');
+  var heavyChargeWrap = document.getElementById('heavyChargeWrap');
+  var heavyChargeFill = document.getElementById('heavyChargeFill');
   var damageOverlay = document.getElementById('damageOverlay');
   var deathOverlay = document.getElementById('deathOverlay');
   var killfeed = document.getElementById('killfeed');
@@ -405,7 +428,7 @@ var selectedRanged = 'rifle'; // 兼容旧变量，始终与 selectedPrimary 同
   var showScore = false;
   var lastHp = 100;
 
-  var keys = { f: false, b: false, l: false, r: false, jump: false, run: false };
+  var keys = { f: false, b: false, l: false, r: false, jump: false, run: false, crouch: false };
 
   var lastLocalFire = 0;
   var lastLocalMelee = 0;
@@ -418,6 +441,9 @@ var lastDrySound = 0;
   var swingStyle = 'slashR';     // 当前挥砍用的弧线
   var swingDur = 0.24;           // 当前挥砍时长（按连段的 cd 倍率算）
   var localComboStage = 0;       // 本地预测的连段段号
+  var heavyWindup = 0;           // 重击前摇剩余秒数（>0 = 前摇进行中）
+  var heavyWindupTotal = 0;      // 本次前摇总时长（进度条用）
+  var heavyCooldownUntil = 0;    // 重击收势到期时间戳（performance.now 口径）
   var bobPhase = 0;
   var sendStateTimer = 0;
 var lastLeaderboardUpdate = 0;
@@ -3457,6 +3483,7 @@ var smokeParticles = [];
       vel: new THREE.Vector3(0, 0, 0), walkPhase: Math.random() * Math.PI * 2,
       deadT: 0, hp: 100, alive: true, current: 'primary', melee: 'knife',
       primary: 'rifle', secondary: 'pistol', kills: 0, deaths: 0, streak: 0, bestStreak: 0,
+      crouch: false,
       fireAnim: 0, swingAnim: 0, throwAnim: 0, firstUpdate: true,
       // 换弹动画：已播时长 / 总时长 / 播的是哪把枪的模型
       reloadAnim: 0, reloadDur: 0, reloadModel: null, reloadId: '',
@@ -4687,6 +4714,8 @@ var smokeParticles = [];
           // 死亡时立刻把横幅收掉。服务端已经把 streak 归零了，
           // 让"神之领域"停在屏幕上跨过死亡画面很怪。
           if (streakBanner) streakBanner.classList.remove('show');
+          // 死亡打断重击前摇：人都倒了不该还举着刀
+          cancelHeavyWindup();
         }
         if (msg.killerId === local.id) {
           // 只在跨过阈值的那一杀有 streakLabel（服务端判定），所以这里不用自己去比。
@@ -4754,6 +4783,7 @@ var smokeParticles = [];
         r.targetPos.set(pd.pos.x, pd.pos.y, pd.pos.z);
         r.targetYaw = pd.yaw;
         r.targetPitch = pd.pitch;
+        if (typeof pd.crouch === 'boolean') r.crouch = pd.crouch;
         if (pd.vel) r.vel.set(pd.vel.x, pd.vel.y, pd.vel.z);
         r.hp = pd.hp;
         r.alive = pd.alive;
@@ -4825,7 +4855,16 @@ var smokeParticles = [];
     var isLocal = msg.id === local.id;
     if (isLocal) {
       if (msg.hitPlayers && msg.hitPlayers.length > 0) {
-        showHitmarker();
+        // 从所有命中玩家里找出最高级别的部位，用作命中标记
+        var rank = { head: 4, torso: 3, leg: 2, arm: 1 };
+        var bestZone = null;
+        if (msg.hitZones) {
+          for (var i = 0; i < msg.hitPlayers.length; i++) {
+            var z = msg.hitZones[msg.hitPlayers[i]];
+            if (z && (bestZone === null || (rank[z] || 0) > (rank[bestZone] || 0))) bestZone = z;
+          }
+        }
+        showHitmarker(bestZone);
         playHitSound();
       }
       return;
@@ -4833,10 +4872,17 @@ var smokeParticles = [];
     var r = remotePlayers.get(msg.id);
     if (r) {
       addSlashEffect(r.renderPos.clone(), r.renderYaw);
-      // 段号由服务端给（它才是判定方），弧线和时长照段号取
-      var stage = msg.stage || 0;
-      r.swingStyle = meleeStep(msg.weaponId, stage).s;
-      r.swingDur = meleeSwingDur(msg.weaponId, stage);
+      if (msg.heavy) {
+        // 重击：弧线和时长照 MELEE_HEAVY 取
+        var hvs = MELEE_HEAVY[msg.weaponId] || MELEE_HEAVY.knife;
+        r.swingStyle = hvs.s;
+        r.swingDur = clamp(hvs.cd * 0.82, 0.18, 0.85);
+      } else {
+        // 段号由服务端给（它才是判定方），弧线和时长照段号取
+        var stage = msg.stage || 0;
+        r.swingStyle = meleeStep(msg.weaponId, stage).s;
+        r.swingDur = meleeSwingDur(msg.weaponId, stage);
+      }
       r.swingAnim = r.swingDur;
       playMeleeSound(msg.weaponId, true);
     }
@@ -4878,6 +4924,7 @@ var smokeParticles = [];
       swingTime = 0;
       localComboStage = 0;
       lastLocalMelee = 0;
+      cancelHeavyWindup();   // 复活打断重击前摇
       vmMeleeGroup.rotation.set(0, 0, 0);
       vmMeleeGroup.position.set(0, 0, 0);
       bloom = 0;
@@ -4934,6 +4981,10 @@ var smokeParticles = [];
         case 'ShiftRight':
           keys.run = true;
           break;
+        case 'ControlLeft':
+        case 'ControlRight':
+          keys.crouch = true;
+          break;
         case 'Tab':
           e.preventDefault();
           showScore = true;
@@ -4971,6 +5022,8 @@ var smokeParticles = [];
         case 'Space': keys.jump = false; break;
         case 'ShiftLeft':
         case 'ShiftRight': keys.run = false; break;
+        case 'ControlLeft':
+        case 'ControlRight': keys.crouch = false; break;
         case 'Tab':
           showScore = false;
           scoreboard.style.display = 'none';
@@ -4999,8 +5052,15 @@ var smokeParticles = [];
           if (!wpn.auto) localFire();
         }
       } else if (e.button === 2) {
-        ads = true;
         e.preventDefault();
+        if (local.current === 'melee') {
+          // 近战：右键一下 = 重击。前摇由 updateLocal 推进，走完自动挥出，
+          // 没有「松手取消」——重击是承诺出去的一刀，点了就要落地。
+          if (!local.alive) return;
+          startHeavyWindup();
+        } else {
+          ads = true;
+        }
       }
     });
 
@@ -5011,6 +5071,7 @@ var smokeParticles = [];
           send({ t: 'attack', down: false });
         }
       } else if (e.button === 2) {
+        // 近战重击没有「松手」语义，前摇照走；这里只处理枪械开镜松开
         ads = false;
       }
     });
@@ -5019,10 +5080,27 @@ var smokeParticles = [];
       e.preventDefault();
     });
 
+    // 鼠标滚轮切换武器：顺序 近战(3) → 主武器(1) → 副武器(2) → 近战...
+    // 向上滚（deltaY < 0）往前走，向下滚往后走。
+    // 滚轮切换要走完整的 switchWeapon 流程（清 trigger / 清 ads / 清 bloom / 同步服务端），
+    // 不能只改 local.current，否则切过去的瞬间还按着左键会直接开火。
+    canvas.addEventListener('wheel', function (e) {
+      if (!gameStarted || !pointerLocked || !local.alive) return;
+      e.preventDefault();
+      var order = ['melee', 'primary', 'secondary'];
+      var idx = order.indexOf(local.current);
+      if (idx < 0) idx = 1;
+      // deltaY > 0 向下滚 → 下一把（index+1）；向上滚 → 上一把（index-1）
+      var next = e.deltaY > 0
+        ? order[(idx + 1) % order.length]
+        : order[(idx - 1 + order.length) % order.length];
+      switchWeapon(next);
+    }, { passive: false });
+
     document.addEventListener('pointerlockchange', function () {
       pointerLocked = document.pointerLockElement === canvas;
       if (!pointerLocked && gameStarted) {
-        keys.f = keys.b = keys.l = keys.r = keys.jump = keys.run = false;
+        keys.f = keys.b = keys.l = keys.r = keys.jump = keys.run = keys.crouch = false;
         triggerDown = false;
         ads = false;
         send({ t: 'attack', down: false });
@@ -5072,6 +5150,8 @@ var smokeParticles = [];
     else return;
     if (triggerDown) { triggerDown = false; send({ t: 'attack', down: false }); }
     ads = false;
+    // 切枪打断重击前摇：换成别的武器，前摇状态没有任何意义
+    cancelHeavyWindup();
     bloom = 0;                 // 换枪清零累积散射（每把枪的 bloomMax 不同，不能沿用）
     // 连段归零：换手之后第一刀必须是第一段。不清的话拿起斧子的第一下
     // 可能直接播成第二段的横劈，而服务端那边算的是第一段。
@@ -5215,6 +5295,9 @@ var smokeParticles = [];
   }
 
   function localMelee() {
+    // 重击前摇期间不能塞轻击：重击是承诺出去的一刀，前摇中轻击会和
+    // 服务端结算叠在同一段时间里。服务端 meleeAttack 有同一条检查。
+    if (heavyWindup > 0) return;
     var now = performance.now();
     var wpn = WEAPONS[local.melee];
     var combo = MELEE_COMBO[local.melee] || MELEE_COMBO.knife;
@@ -5235,6 +5318,49 @@ var smokeParticles = [];
     playMeleeSound(local.melee, false);
   }
 
+  // 重击挥出（前摇走完后由 updateLocal 调用）。重击是独立节奏：
+  // 打断轻击连段、走 MELEE_HEAVY 的弧线、收势时长按重击 cd 折算。
+  function localHeavy() {
+    var hv = MELEE_HEAVY[local.melee] || MELEE_HEAVY.knife;
+    lastLocalMelee = 0;
+    localComboStage = 0;               // 重击打断轻击连段
+    swingStyle = hv.s;
+    swingDur = clamp(hv.cd * 0.82, 0.18, 0.85);
+    swingTime = swingDur;
+    heavyCooldownUntil = performance.now() + hv.cd * 1000;
+    playMeleeSound(local.melee, false);
+    // 重击附加一声低频重音：前摇结束挥出的"闷响"，和轻击的短促"唰"区分开
+    ensureAudio();
+    playTone(120, 0.14, 0.5, 'sawtooth');
+    playNoise(0.18, 300, 0.35, 'lowpass');
+  }
+
+  // 开始重击前摇：右键一下就进前摇，前摇走完由 updateLocal 自动挥出。
+  // 不再有「按住蓄力/松手释放」——前摇期间这刀已经承诺出去了，只能等它落地。
+  function startHeavyWindup() {
+    if (heavyWindup > 0) return;                          // 前摇进行中，不接受二次起手
+    if (performance.now() < heavyCooldownUntil) return;   // 上一刀收势没走完
+    var hv = MELEE_HEAVY[local.melee] || MELEE_HEAVY.knife;
+    heavyWindup = hv.windup;
+    heavyWindupTotal = hv.windup;
+    swingTime = 0;                    // 起手前先打断在播的轻击弧线
+    send({ t: 'heavy', down: true });
+    if (heavyChargeWrap) {
+      heavyChargeWrap.style.display = 'block';
+      heavyChargeWrap.classList.remove('full');
+      if (heavyChargeFill) heavyChargeFill.style.width = '0%';
+    }
+  }
+
+  // 取消前摇（切枪/死亡/复活时调）。服务端在 switch/spawn 里同样会清 heavyStrikeAt。
+  function cancelHeavyWindup() {
+    if (heavyWindup > 0) { heavyWindup = 0; heavyWindupTotal = 0; }
+    if (heavyChargeWrap) {
+      heavyChargeWrap.style.display = 'none';
+      heavyChargeWrap.classList.remove('full');
+    }
+  }
+
   // ----------------------------------------------------------
   // 本地更新
   // ----------------------------------------------------------
@@ -5246,7 +5372,13 @@ var smokeParticles = [];
     // 原来是 (run ? 13 : 8) * (lmg ? 0.6 : 1)，除机枪外所有武器同速。
     var heldWpn = WEAPONS[local.current === 'melee' ? local.melee : currentRangedId()];
     var wpnMove = (heldWpn && heldWpn.moveSpeed) || 1;
-    var speed = (keys.run ? SPRINT_SPEED : WALK_SPEED) * wpnMove * (adsActive ? 0.55 : 1);
+    // 重击前摇时移动大幅减速：前摇是「站定出手」的承诺，边跑边挥还能全速绕圈
+    // 就没法被反打了。前摇期间移速压到 40%。
+    var chargeSlow = (heavyWindup > 0 && local.current === 'melee') ? 0.40 : 1;
+    // 蹲下：移速压到 55%，且不能疾跑（跑速和蹲是互斥的两个状态）
+    var crouchSlow = keys.crouch ? 0.55 : 1;
+    var speed = (keys.crouch ? WALK_SPEED : (keys.run ? SPRINT_SPEED : WALK_SPEED))
+      * wpnMove * (adsActive ? 0.55 : 1) * chargeSlow * crouchSlow;
     var forward = new THREE.Vector3(-Math.sin(local.yaw), 0, -Math.cos(local.yaw));
     var right = new THREE.Vector3(Math.cos(local.yaw), 0, -Math.sin(local.yaw));
     var wish = new THREE.Vector3();
@@ -5263,7 +5395,7 @@ var smokeParticles = [];
       local.vel.z = 0;
     }
 
-    if (keys.jump && local.onGround) {
+    if (keys.jump && local.onGround && !keys.crouch) {
       local.vel.y = 8.5;
       local.onGround = false;
     }
@@ -5312,7 +5444,10 @@ var smokeParticles = [];
       shakeY = Math.cos(performance.now() * 0.043) * damageShake * 0.04;
     }
 
-    camera.position.set(local.pos.x + shakeX, local.pos.y + EYE + bobY * 0.4 + shakeY, local.pos.z);
+    // 蹲下：视线压到 0.8（站姿 1.55）。同时压低的还有服务端按 pos.y 算的部位判定——
+    // 见 sendState 里同步的 crouch 与服务端 raycastPlayerZones 的整体下移。
+    var eyeY = keys.crouch ? 0.80 : EYE;
+    camera.position.set(local.pos.x + shakeX, local.pos.y + eyeY + bobY * 0.4 + shakeY, local.pos.z);
     camera.rotation.y = local.yaw + recoilYaw;
     camera.rotation.x = local.pitch + recoilPitch;
     camera.rotation.z = 0;
@@ -5399,6 +5534,29 @@ var smokeParticles = [];
         vmMeleeGroup.rotation.set(0, 0, 0);
         vmMeleeGroup.position.set(0, 0, 0);
       }
+    } else if (heavyWindup > 0 && local.current === 'melee') {
+      // 重击前摇：武器随前摇进度从待机位扬到蓄势位，前摇走完自动挥出。
+      // 复用 meleeArcPose 的「抬手段」（u∈[0,ARC_W]），进度 0 → 恰好举到蓄势位。
+      // ARC_W=0.20，所以这 20% 的抬手被拉长到整个前摇里，
+      // 观众能看到武器一点点抬起来、然后"锵"地劈出去的过程。
+      var hv = MELEE_HEAVY[local.melee] || MELEE_HEAVY.knife;
+      heavyWindup -= dt;
+      var frac = heavyWindupTotal > 0 ? clamp(1 - heavyWindup / heavyWindupTotal, 0, 1) : 1;
+      var cap = meleeArcPose(hv.s, ARC_W * frac, ARC_TMP);
+      vmMeleeGroup.rotation.set(cap.rx, cap.ry, cap.rz);
+      vmMeleeGroup.position.set(cap.px, cap.py, cap.pz);
+      // HUD 前摇条：走到头（frac≈1）变亮，下一秒就挥出去
+      if (heavyChargeWrap && heavyChargeFill) {
+        heavyChargeFill.style.width = Math.round(frac * 100) + '%';
+        if (frac >= 0.85) heavyChargeWrap.classList.add('full');
+        else heavyChargeWrap.classList.remove('full');
+      }
+      if (heavyWindup <= 0) {
+        // 前摇走完 → 自动挥出。服务端在同一时刻（heavyStrikeAt）于 tick 里结算。
+        heavyWindup = 0;
+        if (heavyChargeWrap) heavyChargeWrap.style.display = 'none';
+        localHeavy();
+      }
     }
 
     updateCrosshair();
@@ -5410,7 +5568,11 @@ var smokeParticles = [];
       r.renderPos.lerp(r.targetPos, k);
       r.renderYaw = lerpAngle(r.renderYaw, r.targetYaw, k);
       r.renderPitch = lerpAngle(r.renderPitch, r.targetPitch, k);
+      // 蹲下：整个模型压低 CROUCH_DROP（与服务端判定下移一致），
+      // 并小幅收窄身位，看着就是「蹲着躲子弹」的样子。
+      var crouchDrop = r.crouch ? 0.75 : 0;
       r.group.position.copy(r.renderPos);
+      r.group.position.y -= crouchDrop;
       r.group.rotation.y = r.renderYaw;
 
       var speed = Math.sqrt(r.vel.x * r.vel.x + r.vel.z * r.vel.z);
@@ -5791,7 +5953,8 @@ var smokeParticles = [];
       vel: { x: local.vel.x, y: local.vel.y, z: local.vel.z },
       yaw: aimYaw(),
       pitch: aimPitch(),
-      ads: !!(ads && local.current !== 'melee')
+      ads: !!(ads && local.current !== 'melee'),
+      crouch: keys.crouch
     });
   }
 
