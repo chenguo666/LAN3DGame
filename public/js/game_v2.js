@@ -404,7 +404,6 @@ var leaderboardList = document.getElementById('leaderboardList');
   var ads = false;            // 右键开镜
   var selectedMelee = 'knife';
   var selectedPrimary = 'rifle';
-var selectedRanged = 'rifle'; // 兼容旧变量，始终与 selectedPrimary 同步
   var showScore = false;
   var lastHp = 100;
 
@@ -4642,22 +4641,22 @@ var smokeParticles = [];
           local.yaw = msg.yaw || 0;
           local.pitch = 0;
         }
-          local.primary = msg.primary || selectedPrimary;
-          local.secondary = 'pistol';
-          local.ranged = local.primary;
-          local.ammoPrimary = WEAPONS[local.primary].mag;
-          local.ammoSecondary = WEAPONS.pistol.mag;
-          local.reservePrimary = (typeof msg.reservePrimary === 'number') ? msg.reservePrimary : WEAPONS[local.primary].reserve;
-          local.reserveSecondary = (typeof msg.reserveSecondary === 'number') ? msg.reserveSecondary : WEAPONS.pistol.reserve;
-          local.grenadeCount = (typeof msg.grenadeCount === 'number') ? msg.grenadeCount : GRENADE_MAX;
-          local.smokeCount = (typeof msg.smokeCount === 'number') ? msg.smokeCount : SMOKE_MAX;
-        local.hp = local.maxHp;
-        local.ammo = WEAPONS[local.ranged].mag;
-        local.reserve = local.reservePrimary;
+        local.primary = msg.primary || selectedPrimary;
+        local.secondary = 'pistol';
+        // ranged 始终跟着 primary，不能再拿本地选的枪盖一遍：服务端如果回的
+        // primary 和本地选的不一样，就会出现"弹匣按 A 枪算、模型是 B 枪"。
+        local.ranged = local.primary;
+        local.current = 'primary';
         local.melee = selectedMelee;
-        local.ranged = selectedRanged;
-        local.current = 'ranged';
-          local.current = 'primary';
+        local.ammoPrimary = WEAPONS[local.primary].mag;
+        local.ammoSecondary = WEAPONS.pistol.mag;
+        local.ammo = local.ammoPrimary;
+        local.reservePrimary = (typeof msg.reservePrimary === 'number') ? msg.reservePrimary : WEAPONS[local.primary].reserve;
+        local.reserveSecondary = (typeof msg.reserveSecondary === 'number') ? msg.reserveSecondary : WEAPONS.pistol.reserve;
+        local.reserve = local.reservePrimary;
+        local.grenadeCount = (typeof msg.grenadeCount === 'number') ? msg.grenadeCount : GRENADE_MAX;
+        local.smokeCount = (typeof msg.smokeCount === 'number') ? msg.smokeCount : SMOKE_MAX;
+        local.hp = local.maxHp;
         local.kills = 0;
         local.deaths = 0;
         lastHp = local.hp;
@@ -5092,9 +5091,10 @@ var smokeParticles = [];
       kneeJoint.rotation.x = -knee;
       leg.add(kneeJoint);
       // 膝盖：大腿 r0.100 直接接小腿 r0.084，转折处是一个圆头突然缩一截，
-      // 看着像玩偶的球窝关节。补一颗略大于小腿的球把这段过渡吃掉。
-      var kneeCap = new THREE.Mesh(new THREE.SphereGeometry(0.094, 12, 10), M.pants);
-      kneeCap.scale.set(0.96, 1, 1.02); kneeCap.castShadow = true;
+      // 看着像玩偶的球窝关节。补一颗和大腿同粗的球把这段过渡吃掉——
+      // 给 0.094 时 x 向只有 0.090，比大腿还细 1cm，正面看膝盖是掐进去的。
+      var kneeCap = new THREE.Mesh(new THREE.SphereGeometry(0.100, 12, 10), M.pants);
+      kneeCap.scale.set(0.98, 1, 1.02); kneeCap.castShadow = true;
       kneeJoint.add(kneeCap);
       var shin = new THREE.Mesh(dcap(0.084, SHIN - 0.168), M.pants);
       shin.position.y = -SHIN / 2; shin.castShadow = true; kneeJoint.add(shin);
@@ -5127,19 +5127,26 @@ var smokeParticles = [];
     var rightLeg = makeLeg(0.115, 0.170, -0.62, 0.085);
 
     // 骨盆/胯（跟着腿，不进 chest：chest 要侧转，转了胯就从腿上甩出去）
-    // 原来是个倒角盒，渲出来是一只硬邦邦的白桶：四条竖棱在胯这个圆的地方特别假，
-    // 而且盒宽必须压过上身胶囊的 0.181，于是在裤子侧面顶出一道台阶。
-    // 换成上宽下窄的圆台再按 0.66 压扁前后：顶圈 0.366 宽（仍然盖得住胶囊），
-    // 往下收到 0.30 收成裤裆，侧面是连续的一条弧线，台阶和竖棱一起没了。
-    // 顶圈 0.170 是**为了藏住自己的顶盖**：圆台的上端面是一个朝天的圆盘，
-    // 正对阳光，比任何竖面都亮，只要露出两毫米就是腰上一道刺眼的白圈（渲过）。
-    // 它必须整个缩进 T 恤下摆的内侧（下摆底圈在这一高度是 x 0.188 / z 0.119）。
-    var pelvis = new THREE.Mesh(new THREE.CylinderGeometry(0.170, 0.150, 0.235, 20), M.pants);
-    pelvis.scale.set(1.0, 1, 0.66);
-    pelvis.position.y = 0.965; pelvis.castShadow = true;
+    // 三版了，记一下前两版分别错在哪：
+    //   倒角盒 —— 四条竖棱在胯这个圆的地方特别假，盒宽还得压过上身胶囊，
+    //             于是在裤子侧面顶出一道台阶。
+    //   上宽下窄的圆台 —— 台阶没了，但换成了一只白桶：上端面是个朝天的圆盘，
+    //             正对阳光比任何竖面都亮；而且**收口方向是反的**，
+    //             裤子在胯这里最窄（0.150）、大腿又鼓到 0.215，
+    //             正面看就是"白桶架在两根气球腿上"。
+    // 现在用椭球：没有任何朝天的平面（顶上是弧顶，怎么照都不会白成一圈），
+    // 最宽处 0.194 正好接上大腿外沿 0.215，往下收进裤裆、往上收进 T 恤下摆
+    // （下摆底圈在这一高度是 x 0.188 / z 0.119，椭球在 y=1.045 只有 0.133）。
+    // 向下多伸 9cm 到 0.808 是为了填住两条大腿之间那道 3cm 的裆缝。
+    var pelvis = new THREE.Mesh(new THREE.SphereGeometry(0.190, 20, 14), M.pants);
+    pelvis.scale.set(1.02, 0.72, 0.62);
+    pelvis.position.y = 0.945; pelvis.castShadow = true;
     // 松紧腰头。露在 T 恤下摆和裤身之间那一截才是"运动裤"的读法。
-    // 半径要比圆台在这一高度的截面（0.174）大，不然整圈埋进裤子里。
-    var waist = dRing(0.180, 0.018, M.band, 1.020, 0, 0.66, 20);
+    // 外沿 0.174/z 0.115 卡在两个尺寸之间：比椭球在这一高度的截面（0.162/0.099）
+    // 大，才看得出是一圈；又必须小于 T 恤下摆（0.188/0.1215），
+    // 否则整圈从黑衣服里钻出来——上一版给到 0.198/0.131，
+    // 前后各钻出去 1cm，正面背面各是一道刺眼的白月牙（渲过）。
+    var waist = dRing(0.160, 0.014, M.band, 1.020, 0, 0.66, 20);
 
     // ---- 上身（黑色紧身短袖 T）----
     var chest = new THREE.Group();
@@ -5191,28 +5198,40 @@ var smokeParticles = [];
     headGroup.add(dP(0.020, 0.046, 0.036, M.skin, 0.081, 1.678, 0.014));
     // 五官。低多边形做脸只要多做就变橡皮泥，够用的量是：眉、眼、鼻、嘴。
     // z 都压在脸的前平面（-0.0875）上，凸出 7mm——凹进去就成了贴在脸上的色块。
-    headGroup.add(dF(0.046, 0.011, 0.012, M.brow, -0.038, 1.727, -0.090));
-    headGroup.add(dF(0.046, 0.011, 0.012, M.brow, 0.038, 1.727, -0.090));
-    headGroup.add(dF(0.036, 0.015, 0.010, M.eye, -0.038, 1.706, -0.090));
-    headGroup.add(dF(0.036, 0.015, 0.010, M.eye, 0.038, 1.706, -0.090));
-    headGroup.add(dP(0.030, 0.052, 0.040, M.skin, 0, 1.684, -0.093));   // 鼻
+    // 眼距原来给到 ±0.038（瞳距 76mm，真人 63mm），配上 46mm 宽的眉毛，
+    // 特写下是"一副墨镜"；收到 ±0.033 才是一双眼。
+    headGroup.add(dF(0.042, 0.011, 0.012, M.brow, -0.034, 1.727, -0.090));
+    headGroup.add(dF(0.042, 0.011, 0.012, M.brow, 0.034, 1.727, -0.090));
+    headGroup.add(dF(0.032, 0.015, 0.010, M.eye, -0.033, 1.706, -0.090));
+    headGroup.add(dF(0.032, 0.015, 0.010, M.eye, 0.033, 1.706, -0.090));
+    // 鼻。倒角盒的截面会被 bevelSize 向外扩 2×7mm，所以标称 0.030×0.052×0.040
+    // 实际是 43×65mm、凸出脸面 25mm——一颗小丑鼻。按真人（宽 35、高 50、凸 20）
+    // 反着算回标称值，就是下面这组。
+    headGroup.add(dP(0.022, 0.040, 0.030, M.skin, 0, 1.682, -0.090));
     headGroup.add(dF(0.044, 0.010, 0.010, M.brow, 0, 1.650, -0.089));   // 嘴
     // 短发：顶盖 + 后脑到发际 + 两侧推短（更亮）+ 顶上几簇碎发。
-    // 顶盖下沿卡在发际线 1.729（眉毛 1.727 之上 2mm），再往下就盖住眉眼变成头盔了。
-    headGroup.add(dP(0.170, 0.072, 0.192, M.hair, 0, 1.772, 0.002));
+    // 顶盖下沿卡在发际线 1.732（眉毛顶 1.7325 之上），再往下就盖住眉眼变成头盔了。
+    // 尺寸也是照倒角外扩反算的：标称 0.161×0.072×0.180 → 实际 0.175×0.086×0.180，
+    // 比脑袋（实际 0.169×0.204×0.175）四周只宽 2~3mm，正是"一层头发"的厚度。
+    // 上一版标称 0.170/0.192 摆在 z=0.002：实际宽 0.184、前脸伸到 -0.094，
+    // 比脸皮还往前 6.5mm，两侧各宽 7.5mm——渲出来是扣了个头盔，
+    // 帽檐还在眉毛上压出一道硬阴影，眉和眼糊成一条黑杠。
+    headGroup.add(dP(0.161, 0.072, 0.180, M.hair, 0, 1.781, 0.000));
     // 后脑那块原来给到 z 0.048±0.05，前沿压到 z=-0.002，正好把耳朵所在的
     // z≈0 那一段整个包住，于是耳朵成了从一团黑里横向戳出来的一块亮方片。
     // 往后挪到 0.030 起（耳朵后沿 0.032）：两者只擦一下，互不遮挡。
     headGroup.add(dP(0.162, 0.135, 0.076, M.hair, 0, 1.706, 0.068));
     // 两侧推短的鬓角只该在耳朵**上方**（真人的渐变就是从鬓角往上推的）。
     // 之前 1.712±0.053 正好压在耳朵上，把耳朵整块吃掉了。
-    headGroup.add(dP(0.015, 0.062, 0.150, M.fade, -0.080, 1.744, 0.010));
-    headGroup.add(dP(0.015, 0.062, 0.150, M.fade, 0.080, 1.744, 0.010));
+    // x 也从 ±0.080 收到 ±0.076：倒角外扩后外沿 0.0868，只比脑袋侧面（0.0845）
+    // 高出 2mm；给 0.080 时外沿 0.0908，是脸颊两侧各贴了一片 6mm 厚的黑翅膀。
+    headGroup.add(dP(0.015, 0.062, 0.150, M.fade, -0.076, 1.748, 0.010));
+    headGroup.add(dP(0.015, 0.062, 0.150, M.fade, 0.076, 1.748, 0.010));
     // 顶上的碎发。三簇分开摆是三个鼓包（像顶了朵蘑菇），改成一条压扁的横向
     // 起伏：前低后高、左右错开，远处只看得出"头顶不是个光滑的盖"，正是要的量。
     var tuft = [[-0.052, 0.030, 0.20], [-0.004, -0.014, -0.10], [0.050, 0.036, 0.26]];
     for (var tf = 0; tf < tuft.length; tf++) {
-      var sp = dP(0.062, 0.024, 0.070, M.hair, tuft[tf][0], 1.816, tuft[tf][1]);
+      var sp = dP(0.062, 0.024, 0.070, M.hair, tuft[tf][0], 1.822, tuft[tf][1]);
       sp.rotation.z = tuft[tf][2];
       headGroup.add(sp);
     }
@@ -5325,20 +5344,37 @@ var smokeParticles = [];
     return dummyFallLift[i0] + (dummyFallLift[i1] - dummyFallLift[i0]) * (u - i0);
   }
 
-  // 量出每个倒地角度下"整具身体的最低点在哪"，取反就是要抬多少。
-  // 用真几何（Box3.setFromObject 会把每个 mesh 的包围盒按世界矩阵摊开），
-  // 不用解析式：姿态是三个关节插值出来的，最低点在倒地过程中会从后脚跟
-  // 换到裤腿、再换到后背，写不出封闭解，量一遍最省事也最不会错。
+  // 量出每个倒地角度下"整具身体的最低点在哪"，差值就是要抬（或压）多少。
+  // 姿态是三个关节插值出来的，最低点在倒地过程中会从后脚跟换到裤腿、再换到后背，
+  // 写不出封闭解，量一遍最省事也最不会错。
+  //
+  // 必须遍历**顶点**：Box3.setFromObject 是把每个 mesh 的局部包围盒按世界矩阵
+  // 摊开再取 AABB，斜着的鞋盒/裤筒，盒角会伸到实体下方一大截——照它抬人，
+  // 站姿抬 1cm、倒地抬 5cm，实测最低点反而浮在地面上方 2cm。
+  // 基准取站姿的最低点（脚底按设计本来就陷进地面约 9mm，见 makeLeg 的外撇），
+  // 于是整个倒地过程里陷入量始终和站着一样：既不露缝，也不浮空，站姿一动不动。
   function measureDummyFall(rec) {
-    var steps = 11, tab = [], box = new THREE.Box3();
+    var steps = 11, raw = [], v = new THREE.Vector3(), lo = 0;
     var y0 = rec.group.position.y;
+    function scan(o) {
+      if (!o.isMesh || !o.geometry) return;
+      var p = o.geometry.attributes && o.geometry.attributes.position;
+      if (!p) return;
+      for (var j = 0; j < p.count; j++) {
+        v.fromBufferAttribute(p, j).applyMatrix4(o.matrixWorld);
+        if (v.y < lo) lo = v.y;
+      }
+    }
     for (var i = 0; i < steps; i++) {
       var k = i / (steps - 1);
       applyDummyFallRaw(rec, k * DUMMY_FALL_MAX, k);
       rec.group.updateMatrixWorld(true);
-      box.setFromObject(rec.bodyGroup);
-      tab.push(Math.max(0, y0 - box.min.y));
+      lo = 1e9;
+      rec.bodyGroup.traverse(scan);
+      raw.push(lo - y0);
     }
+    var tab = [];
+    for (var t = 0; t < raw.length; t++) tab.push(raw[0] - raw[t]);
     dummyFallLift = tab;
   }
   // measureDummyFall 专用：摆姿势但不加抬升（抬升正是要量的东西）
@@ -6428,11 +6464,10 @@ var smokeParticles = [];
 
     document.querySelectorAll('#rangedGrid .weapon-card').forEach(function (card) {
       card.addEventListener('click', function () {
-          if (card.classList.contains('disabled')) return;
+        if (card.classList.contains('disabled')) return;
         document.querySelectorAll('#rangedGrid .weapon-card').forEach(function (c) { c.classList.remove('selected'); });
         card.classList.add('selected');
         selectedPrimary = card.getAttribute('data-id');
-          selectedRanged = selectedPrimary;
       });
     });
 
@@ -6442,15 +6477,18 @@ var smokeParticles = [];
       if (!name) { warnName('请先输入昵称'); return; }
       local.name = name;
       local.melee = selectedMelee;
-        local.primary = selectedPrimary;
-        local.secondary = 'pistol';
-        local.ranged = selectedPrimary;
-      local.ranged = selectedRanged;
-      local.current = 'ranged';
-        local.current = 'primary';
+      local.primary = selectedPrimary;
+      local.secondary = 'pistol';
+      local.ranged = local.primary;
+      local.current = 'primary';
       local.ammoPrimary = WEAPONS[selectedPrimary].mag;
-        local.ammoSecondary = WEAPONS.pistol.mag;
-        local.ammo = local.ammoPrimary;
+      local.ammoSecondary = WEAPONS.pistol.mag;
+      local.ammo = local.ammoPrimary;
+      // 备弹也要按选的枪初始化。joined 一到就会被服务端的值覆盖，但在那之前
+      // HUD 已经画了一帧，不设的话选狙击时会先闪一下步枪的 120 发。
+      local.reservePrimary = WEAPONS[selectedPrimary].reserve;
+      local.reserveSecondary = WEAPONS.pistol.reserve;
+      local.reserve = local.reservePrimary;
       local.hp = local.maxHp;
       local.alive = true;
       lastHp = local.hp;
@@ -6475,13 +6513,5 @@ var smokeParticles = [];
   bindMenu();
   updateHUD();
   animate();
-
-  // ---- 临时几何自检钩子（验完就删）----
-  window.__DUMMYCHK = {
-    THREE: THREE, scene: scene, camera: camera, renderer: renderer,
-    spawnDummies: spawnDummies, dummies: dummies, buildDummyModel: buildDummyModel,
-    updateDummies: updateDummies, createRemotePlayer: createRemotePlayer,
-    applyFall: applyDummyFall, lift: function () { return dummyFallLift; }
-  };
 
 })();

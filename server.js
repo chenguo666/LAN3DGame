@@ -197,7 +197,7 @@ const WEAPONS = {
   // 净增长是负的，于是 p.bloom 在 0 和 0.0035 之间原地弹跳，永远碰不到 bloomMax。
   // 连带把 recoilRamp 也废了 —— 它拿 bloom/bloomMax 当「连了多久」的进度，恒为 0。
   // 现在按「连打 N 发到上限」反解：bloom = bloomDecay×cooldown/1000 + bloomMax/N。
-  // N：手枪 6、霰弹 4、步枪 12、狙 5、连狙 5、机枪 25。
+  // N：手枪 6、霰弹 4、步枪 12、冲锋枪 14、狙 5、连狙 5、机枪 25。
   // 慢射速的两把（霰弹 900ms / 狙 1400ms）光调 bloom 不够：回落量本身就超过 bloomMax，
   // 无论 bloom 多大都攒不起来，所以同时放慢它们的 bloomDecay（狙还抬了 bloomMax）。
   pistol: {
@@ -231,6 +231,23 @@ const WEAPONS = {
     hipSpread: 0.034, recoil: 0.0090, recoilH: 0.0038, recoilRamp: 1.30,
     moveSpeed: 1.00,          // 基准
     color: 0x222222,
+  },
+  smg: {
+    id: 'smg', name: '冲锋枪', type: 'ranged',
+    // 定位是「近身机动」，和步枪的分工靠**射速换射程**而不是单纯的强弱：
+    // 15 伤害躯干七枪，70ms 一发 → 击杀耗时 420ms，比步枪（19×6×105 = 525ms）更快，
+    // 代价是射程只有 65m、单发散布 0.008（步枪 0.005），二十米开外就压不住人。
+    damage: 15, mag: 30, reserve: 150, cooldown: 70, range: 65,
+    pellets: 1, spread: 0.008, reloadTime: 1.5, auto: true,
+    // N 取 14（一梭子 30 发的前半段就打满上限）：
+    // bloom = 0.060×0.070 + 0.050/14 = 0.0078，满足 bloom > bloomDecay×cooldown/1000。
+    bloom: 0.0078, bloomMax: 0.050, bloomDecay: 0.060,
+    // 移动/腰射惩罚是全枪最低的一档（比手枪还低）——冲锋枪的全部意义就在于
+    // 「边跑边打」，这两个数一旦按步枪给，它就只是一把射程更短的步枪。
+    moveSpread: 0.013, airSpread: 0.024, adsSpread: 0.50,
+    hipSpread: 0.018, recoil: 0.0072, recoilH: 0.0044, recoilRamp: 1.45,
+    moveSpeed: 1.10,          // 全枪最快
+    color: 0x2d2f33,
   },
     awp: {
       id: 'awp', name: '狙击步枪', type: 'ranged',
