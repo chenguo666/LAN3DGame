@@ -45,10 +45,11 @@
     // 后果是连发散射和（依赖 bloom/bloomMax 当进度的）后坐力增长**两个都是死的**：
     // 模拟一梭子 30 发，每一发的散射和抬枪量分毫不差。
     // 现在按「打满 N 发到上限」反解：bloom = bloomDecay×cooldown/1000 + bloomMax/N。
-    // N 取值：手枪 6、霰弹 4、步枪 12、狙 5、连狙 5、机枪 25。
+    // N 取值：手枪 6、霰弹 4、步枪 12、冲锋枪 14、狙 5、连狙 5、机枪 25。
     pistol: { id: 'pistol', name: '手枪', type: 'ranged', damage: 26, mag: 12, reserve: 48, cooldown: 240, range: 90, pellets: 1, spread: 0.006, reloadTime: 1.3, auto: false, bloom: 0.0170, bloomMax: 0.030, bloomDecay: 0.050, moveSpread: 0.012, airSpread: 0.020, adsSpread: 0.55, hipSpread: 0.020, recoil: 0.0130, recoilH: 0.0045, recoilRamp: 0.85, moveSpeed: 1.06, color: 0x444444 },
     shotgun: { id: 'shotgun', name: '霰弹枪', type: 'ranged', damage: 13, mag: 6, reserve: 24, cooldown: 900, range: 45, pellets: 8, spread: 0.050, reloadTime: 2.3, auto: false, bloom: 0.0440, bloomMax: 0.075, bloomDecay: 0.028, moveSpread: 0.020, airSpread: 0.030, adsSpread: 0.80, hipSpread: 0.016, recoil: 0.0330, recoilH: 0.0080, recoilRamp: 0.55, moveSpeed: 0.96, color: 0x553311 },
     rifle: { id: 'rifle', name: '突击步枪', type: 'ranged', damage: 19, mag: 30, reserve: 120, cooldown: 105, range: 110, pellets: 1, spread: 0.005, reloadTime: 1.9, auto: true, bloom: 0.0093, bloomMax: 0.042, bloomDecay: 0.055, moveSpread: 0.016, airSpread: 0.028, adsSpread: 0.45, hipSpread: 0.034, recoil: 0.0090, recoilH: 0.0038, recoilRamp: 1.30, moveSpeed: 1.00, color: 0x222222 },
+    smg: { id: 'smg', name: '冲锋枪', type: 'ranged', damage: 15, mag: 30, reserve: 150, cooldown: 70, range: 65, pellets: 1, spread: 0.008, reloadTime: 1.5, auto: true, bloom: 0.0078, bloomMax: 0.050, bloomDecay: 0.060, moveSpread: 0.013, airSpread: 0.024, adsSpread: 0.50, hipSpread: 0.018, recoil: 0.0072, recoilH: 0.0044, recoilRamp: 1.45, moveSpeed: 1.10, color: 0x2d2f33 },
     awp: { id: 'awp', name: '狙击步枪', type: 'ranged', damage: 120, mag: 5, reserve: 20, cooldown: 1400, range: 160, pellets: 1, spread: 0.0004, reloadTime: 2.6, auto: false, bloom: 0.0200, bloomMax: 0.030, bloomDecay: 0.010, moveSpread: 0.030, airSpread: 0.045, adsSpread: 0.15, hipSpread: 0.070, recoil: 0.0460, recoilH: 0.0060, recoilRamp: 0.45, moveSpeed: 0.86, color: 0x1a3a1a },
       dmr: { id: 'dmr', name: '连狙', type: 'ranged', damage: 55, mag: 10, reserve: 40, cooldown: 300, range: 120, pellets: 1, spread: 0.002, reloadTime: 2.1, auto: false, bloom: 0.0150, bloomMax: 0.022, bloomDecay: 0.035, moveSpread: 0.020, airSpread: 0.032, adsSpread: 0.30, hipSpread: 0.046, recoil: 0.0230, recoilH: 0.0050, recoilRamp: 1.00, moveSpeed: 0.93, color: 0x2a4a2a },
       lmg: { id: 'lmg', name: '重机枪', type: 'ranged', damage: 16, mag: 125, reserve: 125, cooldown: 95, range: 100, pellets: 1, spread: 0.009, reloadTime: 3.8, auto: true, bloom: 0.0070, bloomMax: 0.055, bloomDecay: 0.050, moveSpread: 0.024, airSpread: 0.036, adsSpread: 0.60, hipSpread: 0.042, recoil: 0.0062, recoilH: 0.0042, recoilRamp: 1.70, moveSpeed: 0.76, color: 0x3a3a3a }
@@ -57,6 +58,16 @@
   // 投掷物携带上限（与 server.js 一致）
   var GRENADE_MAX = 2;
   var SMOKE_MAX = 2;
+
+  // 带光学镜的枪。开镜时要同时做三件事：套狙击镜遮罩、收起手里的枪、按倍率
+  // 补偿鼠标灵敏度。原来这三处各自硬编码成 `=== 'awp'`，于是连狙明明建模时
+  // 就装了一支瞄准镜，开镜却只是把 FOV 收到 35°，镜筒等于白做。现在统一查表。
+  //   fov : 开镜后的视场角（基准 75°）。越小倍率越高：awp 6.8×、dmr 3.4×
+  //   k   : 通光孔半径相对 min(50vw, 50vh) 的比例，开镜时写进 CSS 变量 --scope-k
+  var SCOPES = {
+    awp: { fov: 11, k: 0.70 },
+    dmr: { fov: 22, k: 0.62 }
+  };
 
   var BOXES = [
     { x: -12, z: -8, w: 4, h: 3, d: 4 },
@@ -2197,6 +2208,141 @@ var smokeParticles = [];
     return g;
   }
 
+  // -------------------- 冲锋枪 SMG（MP5 风格）--------------------
+  // 和步枪最重要的区别是**长度**：全枪 0.94m，只有步枪（1.31m）的 0.72 倍。
+  // 剪影上还刻意选了三处 MP5 的招牌特征，让它在第三人称一眼就能和步枪区分开：
+  // 圆筒机匣（不是方机匣）、左上方贯穿全长的拉机柄管、带罩的圆环形准星。
+  // 尺寸标定：本作的枪械尺度约为真枪的 1.45 倍（步枪 1.313m ↔ 真 AR 约 0.9m），
+  // 下面每个"真枪多少毫米"的注释都是按这个倍率折算过再落到坐标上的。
+  function buildSMG(withHands) {
+    var M = weaponMats();
+    var g = new THREE.Group();
+    // ---- 机匣：上圆筒 + 下方扳机组壳体 + 顶部导轨 ----
+    var recv = mCylZ(0.036, 0.036, 0.34, M.gunmetal, 20);
+    recv.position.set(0, 0.024, -0.02); g.add(recv);
+    var recvCap = mCylZ(0.038, 0.038, 0.018, M.darkSteel, 20);
+    recvCap.position.set(0, 0.024, 0.152); g.add(recvCap);
+    g.add(rBox(0.058, 0.058, 0.24, 0.014, M.polymer, 0, -0.030, 0.02));
+    g.add(rBox(0.028, 0.010, 0.34, 0.003, M.darkSteel, 0, 0.068, -0.02));
+    addRibs(g, 10, M.gunmetal, 0, 0.074, -0.17, 0.034, 0.034, 0.008, 0.020);
+    // 抛壳口盖（贴在圆筒右侧，高度压在筒的轮廓里才不会戳出剪影）
+    g.add(mBox(0.014, 0.020, 0.075, M.darkSteel, 0.030, 0.026, -0.05));
+    // ---- 拉机柄：MP5 的拉机柄管在枪管左上方，柄在管的后端 ----
+    // 管子和护木一样长（-0.455..-0.155）。它是最好认的 MP5 特征，做短了就只是
+    // 护木上的一小截凸起；跑满全长后，左侧剪影上是一条贯穿的平行管。
+    var cockTube = mCylZ(0.016, 0.016, 0.30, M.gunmetal, 14);
+    cockTube.position.set(-0.028, 0.046, -0.305); g.add(cockTube);
+    var sCharge = part(g, 'charge');
+    sCharge.add(rBox(0.026, 0.024, 0.042, 0.006, M.darkSteel, -0.028, 0.046, -0.20));
+    sCharge.add(mBox(0.040, 0.014, 0.018, M.trimSteel, -0.048, 0.046, -0.20));
+    // ---- 护木：圆管 + 侧面散热孔 + 短前握把 ----
+    // 护木前端顶到 z -0.460。真 MP5 的护木几乎盖到枪口，外露枪管只有 25mm 上下
+    // （占全枪 3.7%）；原来护木只做到 -0.390，露出 160mm 细枪管（占 17%），
+    // 剪影立刻变成斯登/汤普森那类长杆枪，冲锋枪的"短粗"辨识度就没了。
+    var hand = mCylZ(0.032, 0.032, 0.30, M.polymer, 20);
+    hand.position.set(0, 0.024, -0.310); g.add(hand);
+    for (var v = 0; v < 5; v++) {
+      var vz = -0.215 - v * 0.048;
+      [-0.032, 0.032].forEach(function (vx) {
+        var vh = mCylY(0.009, 0.009, 0.014, M.darkSteel, 12);
+        vh.rotation.z = Math.PI / 2; vh.position.set(vx, 0.024, vz); g.add(vh);
+      });
+    }
+    // 前握把落在 z -0.300：这个数不是随手挑的，第三人称的左手落点 SUPP_LOCAL
+    // 就是模型局部 (0, -0.075, -0.30)，**两个坐标**都要落在实体里，手才真的握在把上。
+    // 尺寸是反过来解出来的：把身要包住 y -0.075，而 rotation.x -0.18 会把最低点
+    // 再抬起 cos(0.18)≈0.984 倍，所以取高 0.090 / 中心 -0.045 —— 下缘到 -0.089，
+    // 留 14mm 余量。（原来高 0.070 / 中心 -0.026，下缘只到 -0.065，第三人称左手
+    // 悬在把外 10.8mm；实测出来的数，不是估的。）
+    // 90mm 的立式前握把在 944mm 的全枪上也符合真枪比例（真 MP5 前握把 80~100mm）。
+    var sFg = rBox(0.036, 0.090, 0.042, 0.014, M.polymer, 0, -0.045, -0.300, 'y');
+    sFg.rotation.x = -0.18; g.add(sFg);
+    addRibs(g, 3, M.polymerLt, 0, -0.052, -0.318, 0.014, 0.044, 0.008, 0.008);
+    // ---- 枪管 + 卡榫座 + 短消焰器：整段都压在护木口前方 90mm 以内 ----
+    var barrel = mCylZ(0.0135, 0.0145, 0.070, M.darkSteel, 16);
+    barrel.position.set(0, 0.024, -0.500); g.add(barrel);
+    // 卡榫环内径要 ≤ 枪管半径才是真的箍在管子上：r 0.019 − tube 0.005 = 0.014
+    // ≤ 该处管半径 0.0143。原来 r 0.020 留出 0.7mm 缝，AABB 查不出来，但看得见。
+    g.add(ringZ(0.019, 0.005, M.gunmetal, 0, 0.024, -0.472, 18));
+    var flash = mCylZ(0.021, 0.019, 0.042, M.darkSteel, 16);
+    flash.position.set(0, 0.024, -0.529); g.add(flash);
+    addRibs(g, 3, M.gunmetal, 0, 0.038, -0.543, 0.017, 0.026, 0.010, 0.010);
+    // 带罩的环形准星：跟着护木一起前移到枪口跟前（真枪的准星护罩就贴着枪口，
+    // 不是架在护木中段）。座 → 圆环 → 立柱，环是 torus，从枪口方向看真的空心。
+    g.add(rBox(0.026, 0.030, 0.030, 0.006, M.darkSteel, 0, 0.046, -0.478));
+    g.add(ringZ(0.019, 0.005, M.darkSteel, 0, 0.068, -0.480, 16));
+    g.add(mBox(0.005, 0.024, 0.006, M.trimSteel, 0, 0.062, -0.480));
+    // ---- 弹匣井 + 弯弹匣 ----
+    // 横截面按真枪的「扁刀片」给。9mm 双排弹匣本体约 32×80mm，按本作 1.45 倍的
+    // 尺度（步枪全长 1.313m ↔ 真 AR 约 0.9m）≈ 46×116mm。原来 w 0.056 / d 0.072
+    // 再被 rBox 的 7mm 倒角双向撑开，实际是 70×86mm —— 接近正方形，于是看着像
+    // 机枪弹匣而不是冲锋枪弹匣。现在 w 0.038 / d 0.084 → 实际 52×98mm。
+    g.add(rBox(0.048, 0.05, 0.090, 0.010, M.gunmetal, 0, -0.062, -0.055, 'y'));
+    var sMag = part(g, 'mag');
+    // dA 0.105 是全枪最大的弯度：MP5 的 30 发弹匣本来就比步枪弹匣弯得多
+    var mEnd = addCurvedMag(sMag, M.polymer, 0, -0.084, -0.055, 4, 0.056, 0.038, 0.084, 0.105);
+    // 匣底板要贴在弯匣的**末端**、并跟着最后一节一起倾。addCurvedMag 的返回值
+    // 就是末端坐标，直接拿来用；原来写死在 y -0.200，整块板埋在匣体中段看不见。
+    var mFloor = rBox(0.048, 0.014, 0.094, 0.006, M.darkSteel, 0, mEnd[0] + 0.004, mEnd[1], 'y');
+    mFloor.rotation.x = -0.105 * 4;
+    sMag.add(mFloor);
+    // 侧面小凸台：匣体收窄后（实际半宽 0.026）这排凸台必须重新对准表面。
+    // 原来 x 0.030 / 宽 0.026，有 8mm 悬在匣体外面像长了一排小翅膀；
+    // 收到 x 0.021 / 宽 0.006 又整排埋进去（0.018~0.024，比表面还低 2mm），
+    // 白搭 6 个 mesh。现在 x 0.026 / 宽 0.005 → 0.0235~0.0285，只探出 2.5mm，
+    // 在 52mm 宽的匣体上正好是真枪那种观弹筋的量级。
+    addRibs(sMag, 3, M.polymer, 0.026, -0.145, -0.078, 0.026, 0.005, 0.006, 0.010);
+    addRibs(sMag, 3, M.polymer, -0.026, -0.145, -0.078, 0.026, 0.005, 0.006, 0.010);
+    anchor(g, 'magWell', 0, -0.092, -0.055);
+    // ---- 握把 + 扳机组 ----
+    // 握把中心 z 0.142，配 rotation.x -0.36 后右手正好落在 0.160 —— 与 GRIP_LOCAL
+    // （模型局部 z 0.16）同一个点，第三人称的右手才真的握在握把上。
+    var grip = rBox(0.056, 0.130, 0.070, 0.020, M.polymer, 0, -0.094, 0.142, 'y');
+    grip.rotation.x = -0.36; g.add(grip);
+    addRibs(g, 4, M.polymerLt, 0, -0.102, 0.113, 0.006, 0.060, 0.012, 0.020);
+    g.add(loopX(0.031, 0.010, M.polymer, 0, -0.058, 0.082, 22));
+    g.add(mBox(0.012, 0.034, 0.014, M.trimSteel, 0, -0.058, 0.070));
+    // 保险/快慢机：柄要跨过机匣表面（±0.036）才看得见，全埋在里面等于没做
+    var sel = mCylY(0.013, 0.013, 0.020, M.trimSteel, 12);
+    sel.rotation.z = Math.PI / 2; sel.position.set(-0.036, -0.024, 0.118); g.add(sel);
+    g.add(mBox(0.010, 0.014, 0.032, M.trimSteel, -0.042, -0.024, 0.108));
+    g.add(mBox(0.010, 0.018, 0.028, M.trimSteel, 0.036, -0.052, -0.004));
+    // ---- 伸缩托（拉开状态）：导管 + 滑套 + 腮托 + 托底板 ----
+    var stube = mCylZ(0.020, 0.020, 0.24, M.gunmetal, 16);
+    stube.position.set(0, 0.014, 0.255); g.add(stube);
+    g.add(rBox(0.046, 0.050, 0.09, 0.012, M.polymer, 0, 0.012, 0.235));
+    var sComb = rBox(0.042, 0.028, 0.15, 0.012, M.polymer, 0, 0.046, 0.268);
+    sComb.rotation.x = -0.10; g.add(sComb);
+    // 托底板连同防滑条做成一个子组：条子必须跟着底板一起倾，
+    // 各自写 rotation 只会让条子从斜面上飘出来。
+    var sButt = new THREE.Group();
+    sButt.position.set(0, 0.006, 0.372);
+    sButt.rotation.x = 0.20;
+    sButt.add(rBox(0.058, 0.098, 0.026, 0.012, M.darkSteel, 0, 0, 0));
+    for (var bp = 0; bp < 3; bp++) sButt.add(mBox(0.050, 0.007, 0.008, M.polymer, 0, -0.026 + bp * 0.026, 0.011));
+    g.add(sButt);
+    // 背带环：后环埋在滑套里（滑套半宽 0.030），前环挂在护木前段的侧下方。
+    // 原来前环写在 y 0.024（正对护木轴心），环的上半圈就从筒背上冒出来，
+    // 看着像枪管上凭空多了个提环；压到 y 0.004 才是真枪那种侧挂法。
+    g.add(loopX(0.015, 0.005, M.trimSteel, 0.028, 0.012, 0.240, 14));
+    g.add(loopX(0.014, 0.005, M.trimSteel, 0.029, 0.004, -0.425, 14));
+    // ---- 开放式反射瞄具（和步枪的筒式红点区分开）----
+    g.add(rBox(0.034, 0.024, 0.058, 0.007, M.darkSteel, 0, 0.086, 0.050));
+    [-0.016, 0.016].forEach(function (wx) {
+      g.add(mBox(0.006, 0.040, 0.046, M.darkSteel, wx, 0.120, 0.040));
+    });
+    g.add(rBox(0.038, 0.042, 0.014, 0.006, M.darkSteel, 0, 0.120, 0.062));
+    g.add(mBox(0.038, 0.006, 0.048, M.darkSteel, 0, 0.141, 0.040));
+    var sPane = mBox(0.026, 0.034, 0.004, M.lensBlue, 0, 0.119, 0.026);
+    sPane.rotation.x = 0.16; g.add(sPane);
+    g.add(mBox(0.006, 0.006, 0.003, M.lensRed, 0, 0.119, 0.022));
+    addScrew(g, M.trimSteel, 0.024, 0.086, 0.062, 0.006);
+    var muzzle = new THREE.Object3D(); muzzle.position.set(0, 0.024, -0.565); g.add(muzzle);
+    g.userData.muzzle = muzzle;
+    if (withHands) addHands(g, [0.0, -0.112, 0.160], [0.0, -0.048, -0.300], { rRotX: -0.36, lRotX: -0.12 });
+    return g;
+  }
+
   // -------------------- 狙击步枪 AWP --------------------
   function buildAWP(withHands) {
     var M = weaponMats();
@@ -2466,7 +2612,7 @@ var smokeParticles = [];
     return g;
   }
 
-  var GUN_BUILDERS = { pistol: buildPistol, shotgun: buildShotgun, rifle: buildRifle, awp: buildAWP, dmr: buildDMR, lmg: buildLMG };
+  var GUN_BUILDERS = { pistol: buildPistol, shotgun: buildShotgun, rifle: buildRifle, smg: buildSMG, awp: buildAWP, dmr: buildDMR, lmg: buildLMG };
   function buildGunModel(id, withHands) {
     var fn = GUN_BUILDERS[id] || buildRifle;
     return fn(withHands);
@@ -2704,7 +2850,7 @@ var smokeParticles = [];
   // ----------------------------------------------------------
   function createGunModels() {
     vmGunGroup = new THREE.Group();
-    ['pistol', 'shotgun', 'rifle', 'awp', 'dmr', 'lmg'].forEach(function (id) {
+    ['pistol', 'shotgun', 'rifle', 'smg', 'awp', 'dmr', 'lmg'].forEach(function (id) {
       var model = buildGunModel(id, true);
       muzzleAnchors[id] = model.userData.muzzle;
       vmGunGroup.add(model);
@@ -2763,10 +2909,10 @@ var smokeParticles = [];
   // 不能在这里直接写。
   // ----------------------------------------------------------
   var RELOAD_STYLE = {
-    pistol: 'mag', rifle: 'mag', dmr: 'mag', lmg: 'mag', awp: 'bolt', shotgun: 'pump'
+    pistol: 'mag', rifle: 'mag', smg: 'mag', dmr: 'mag', lmg: 'mag', awp: 'bolt', shotgun: 'pump'
   };
   // 拉机柄/枪机/泵的行程：手枪套筒短，狙的枪机和泵的行程长
-  var RELOAD_THROW = { pistol: 0.030, rifle: 0.055, dmr: 0.055, lmg: 0.040, awp: 0.085, shotgun: 0.100 };
+  var RELOAD_THROW = { pistol: 0.030, rifle: 0.055, smg: 0.040, dmr: 0.055, lmg: 0.040, awp: 0.085, shotgun: 0.100 };
 
   // 段内归一化进度：u 落在 [a,b] 外就吃 0/1，落在内就线性升到 1
   function rlSeg(u, a, b) {
@@ -3768,6 +3914,8 @@ var smokeParticles = [];
     else if (weaponId === 'awp') { playNoise(0.32, 500, v * 1.0, 'bandpass'); playTone(90, 0.22, v * 0.6, 'sawtooth'); playNoise(0.18, 2400, v * 0.35, 'bandpass'); }
     else if (weaponId === 'dmr') { playNoise(0.2, 900, v * 0.8, 'bandpass'); playTone(110, 0.12, v * 0.5, 'sawtooth'); }
       else if (weaponId === 'rifle') { playNoise(0.09, 2300, v * 0.45, 'bandpass'); playTone(180, 0.06, v * 0.3, 'square'); }
+    // 冲锋枪：比步枪更短更脆（小口径手枪弹），70ms 一发时才不会糊成一片轰鸣
+    else if (weaponId === 'smg') { playNoise(0.06, 2900, v * 0.40, 'bandpass'); playTone(230, 0.045, v * 0.26, 'square'); }
     else if (weaponId === 'lmg') { playNoise(0.11, 1500, v * 0.6, 'bandpass'); playTone(130, 0.08, v * 0.4, 'sawtooth'); }
       else { playNoise(0.12, 1700, v * 0.6, 'bandpass'); playTone(240, 0.08, v * 0.35, 'square'); }
   }
@@ -4413,9 +4561,14 @@ var smokeParticles = [];
     }
     crosshair.style.setProperty('--gap', gap.toFixed(1) + 'px');
 
-    var scoped = ads && local.current !== 'melee' && currentRangedId() === 'awp';
+    var sc = (local.current !== 'melee') ? SCOPES[currentRangedId()] : null;
+    var scoped = ads && !!sc;
     crosshair.classList.toggle('hidden', scoped);
-    if (scopeOverlay) scopeOverlay.style.display = scoped ? 'block' : 'none';
+    if (scopeOverlay) {
+      scopeOverlay.style.display = scoped ? 'block' : 'none';
+      // 孔径按枪写进 CSS 变量：狙的镜筒比连狙更大，扫一眼遮罩就知道手里是哪把
+      if (scoped) scopeOverlay.style.setProperty('--scope-k', String(sc.k));
+    }
   }
 
     function updateRespawnCountdown() {
@@ -5556,7 +5709,13 @@ var smokeParticles = [];
 
     document.addEventListener('mousemove', function (e) {
       if (!pointerLocked) return;
-      var sens = (ads && local.current !== 'melee') ? 0.0012 : 0.0022;
+      var aiming = ads && local.current !== 'melee';
+      var sens = aiming ? 0.0012 : 0.0022;
+      // 高倍镜必须补灵敏度：镜内每一像素代表的角度随 FOV 一起变小，不补的话
+      // 6.8 倍的狙比腰射还难瞄——手一抖人就整个飞出视野。以连狙原来的 35°
+      // 为基准按 FOV 等比缩放：上限 1（开镜过程中 FOV 还在 75 附近，不能反而变快），
+      // 下限 0.45（11° 的狙再按比例给会慢到跟不上跑动的人）。
+      if (aiming && SCOPES[currentRangedId()]) sens *= clamp(camera.fov / 35, 0.45, 1);
       local.yaw -= e.movementX * sens;
       local.pitch = clamp(local.pitch - e.movementY * sens, -1.55, 1.55);
     });
@@ -5886,7 +6045,12 @@ var smokeParticles = [];
     }
 
     // 开镜 FOV
-    var targetFov = adsActive ? (local.ranged === 'awp' ? 20 : (local.ranged === 'dmr' ? 35 : 50)) : 75;
+    // 开镜 FOV。带光学镜的枪按 SCOPES 表给倍率，其余枪一律收到 50°。
+    var targetFov = 75;
+    if (adsActive) {
+      var adsScope = SCOPES[local.ranged];
+      targetFov = adsScope ? adsScope.fov : 50;
+    }
     if (Math.abs(camera.fov - targetFov) > 0.05) {
       camera.fov += (targetFov - camera.fov) * (1 - Math.exp(-dt * 16));
       camera.updateProjectionMatrix();
@@ -5946,11 +6110,9 @@ var smokeParticles = [];
     }
 
     // 开镜时隐藏/移动武器
-    if (adsActive && local.ranged === 'awp') {
-      vmGroup.visible = false;
-    } else {
-      vmGroup.visible = true;
-    }
+    // 开镜时隐藏武器：只有真正贴到镜筒后面去看（有光学镜的枪）才要收起枪身，
+    // 其余枪的"开镜"是机械瞄具贴腮，枪必须留在画面里。
+    vmGroup.visible = !(adsActive && SCOPES[local.ranged]);
 
     // 后坐力恢复。
     //

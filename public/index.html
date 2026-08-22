@@ -287,17 +287,25 @@
     #scopeReticle::before { left: 50%; top: 0; width: 1px; height: 100%; transform: translateX(-50%); }
     #scopeReticle::after { top: 50%; left: 0; height: 1px; width: 100%; transform: translateY(-50%); }
 
-      /* 新版狙击镜：中心全透明，四周黑色遮罩，白色分划线 */
+      /* 新版狙击镜：中心全透明，四周黑色遮罩，白色分划线。
+         通光孔半径 = --scope-k × min(50vw, 50vh)：
+         - 乘的是两者的**较小值**，所以任何窗口比例下孔都是个正圆，且永远不会
+           被上下边缘裁掉（原来写死 110px，1080p 上只占屏高的 20%，小得像针孔）；
+         - --scope-k 由 JS 开镜时按枪写入（狙 0.70 / 连狙 0.62），这里的值只是
+           兜底，防止某一帧遮罩已显示而变量还没写进来。 */
       #scopeOverlay {
+        --scope-k: 0.70;
+        --scope-r: calc(var(--scope-k) * min(50vw, 50vh));
         background: radial-gradient(circle at center,
           rgba(0,0,0,0) 0px,
-          rgba(0,0,0,0) 110px,
-          rgba(0,0,0,0.88) 112px,
-          rgba(0,0,0,0.96) 100%);
+          rgba(0,0,0,0) var(--scope-r),
+          rgba(0,0,0,0.90) calc(var(--scope-r) + 2px),
+          rgba(0,0,0,0.985) 100%);
       }
       #scopeOverlay::before { display: none; }
       #scopeReticle {
-        width: 240px; height: 240px;
+        width: calc(var(--scope-r) * 2 + 20px);
+        height: calc(var(--scope-r) * 2 + 20px);
         border: 1px solid rgba(255,255,255,0.5);
       }
       #scopeReticle::before, #scopeReticle::after {
@@ -608,6 +616,12 @@
           <div class="w-name">🎯 突击步枪</div>
           <div class="w-type">全自动 · 持续火力</div>
           <div class="w-stats">伤害 19 · 弹匣 30 · 备弹 120<br>射程 110m · 射速 105ms · 移速 基准</div>
+        </div>
+        <div class="weapon-card" data-id="smg">
+          <div class="check"></div>
+          <div class="w-name">💨 冲锋枪</div>
+          <div class="w-type">全自动 · 近身机动</div>
+          <div class="w-stats">伤害 15 · 弹匣 30 · 备弹 150<br>射程 65m · 射速 70ms · 移速 +10%</div>
         </div>
           <div class="weapon-card" data-id="awp">
             <div class="check"></div>

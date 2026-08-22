@@ -257,7 +257,7 @@ const WEAPONS = {
       // 手臂 94 / 腿 96 都刚好留一口气，爆头 282 —— 参照 CS 的 AWP
       // （胸 115、腿不致死）也是这个思路：狙的强度体现在「命中就赢」，
       // 而不是「打到哪都赢」。
-      damage: 120, mag: 5, reserve: 20, cooldown: 1400, range: 160,
+      damage: 135, mag: 5, reserve: 20, cooldown: 1400, range: 160,
       pellets: 1, spread: 0.0004, reloadTime: 2.6, auto: false,
       bloom: 0.0200, bloomMax: 0.030, bloomDecay: 0.010,
       moveSpread: 0.030, airSpread: 0.045, adsSpread: 0.15,
