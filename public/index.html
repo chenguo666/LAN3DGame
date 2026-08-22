@@ -350,6 +350,30 @@
     100% { opacity: 0; transform: translate(-50%,-50%) rotate(45deg) scale(.75); }
   }
 
+  /* 重击前摇条：准星正下方的一条横条，只在近战重击前摇时出现。
+     前摇按进度填充，快走完时整条变亮——告诉玩家「这一刀马上挥出去」。*/
+  #heavyChargeWrap {
+    position: absolute; left: 50%; top: 56%;
+    transform: translateX(-50%);
+    width: 120px; height: 6px;
+    border-radius: 3px;
+    background: rgba(255,255,255,.12);
+    border: 1px solid rgba(255,255,255,.35);
+    display: none;
+    pointer-events: none;
+    overflow: hidden;
+  }
+  #heavyChargeFill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #3cc8ff, #ffcf3a);
+    transition: width .03s linear;
+  }
+  #heavyChargeWrap.full #heavyChargeFill {
+    background: linear-gradient(90deg, #ffb03a, #ff5a3c);
+    box-shadow: 0 0 8px rgba(255,90,60,.9);
+  }
+
   #damageOverlay {
     position: absolute; inset: 0;
     background: radial-gradient(ellipse at center, transparent 40%, rgba(255,0,0,.55) 100%);
@@ -567,31 +591,31 @@
           <div class="check"></div>
           <div class="w-name">🔪 战术匕首</div>
           <div class="w-type">近战 · 攻速极快</div>
-          <div class="w-stats">伤害 30 · 移速 +15%<br>范围 2.4m · 冷却 0.38s</div>
+          <div class="w-stats">轻击 30 · 重击 60<br>范围 2.4m · 轻击 0.32s/刀 · 重击 1.0s/刀(前摇0.45s)</div>
         </div>
         <div class="weapon-card" data-id="axe">
           <div class="check"></div>
           <div class="w-name">🪓 消防斧</div>
           <div class="w-type">近战 · 重击</div>
-          <div class="w-stats">伤害 60 · 移速 -4%<br>范围 3.0m · 冷却 0.95s</div>
+          <div class="w-stats">轻击 55 · 重击 80<br>范围 3.0m · 轻击 0.78s/刀 · 重击 1.85s/刀(前摇0.90s)</div>
         </div>
         <div class="weapon-card" data-id="katana">
           <div class="check"></div>
           <div class="w-name">⚔️ 武士刀</div>
           <div class="w-type">近战 · 均衡</div>
-          <div class="w-stats">伤害 40 · 移速 +6%<br>范围 3.2m · 冷却 0.56s</div>
+          <div class="w-stats">轻击 45 · 重击 66<br>范围 3.2m · 轻击 0.48s/刀 · 重击 1.45s/刀(前摇0.70s)</div>
         </div>
           <div class="weapon-card" data-id="kukri">
             <div class="check"></div>
             <div class="w-name">🗡️ 尼泊尔军刀</div>
             <div class="w-type">近战 · 弯刀</div>
-            <div class="w-stats">伤害 45 · 移速 +12%<br>范围 2.6m · 冷却 0.45s</div>
+            <div class="w-stats">轻击 40 · 重击 66<br>范围 2.6m · 轻击 0.42s/刀 · 重击 1.30s/刀(前摇0.60s)</div>
           </div>
           <div class="weapon-card" data-id="chainsaw">
             <div class="check"></div>
             <div class="w-name">🪚 电锯</div>
             <div class="w-type">近战 · 极速切割</div>
-            <div class="w-stats">伤害 30 · 移速 -10%<br>范围 2.7m · 冷却 0.25s</div>
+            <div class="w-stats">轻击 30 · 重击 62<br>范围 2.7m · 轻击 0.30s/刀 · 重击 1.40s/刀(前摇0.65s)</div>
           </div>
       </div>
     </div>
@@ -609,7 +633,7 @@
           <div class="check"></div>
           <div class="w-name">💥 霰弹枪</div>
           <div class="w-type">半自动 · 近距爆发</div>
-          <div class="w-stats">伤害 13×8 弹丸 · 弹匣 6 · 备弹 24<br>射程 45m · 射速 900ms · 移速 -4%</div>
+          <div class="w-stats">伤害 18×10 弹丸 · 弹匣 8 · 备弹 32<br>射程 55m · 射速 700ms · 移速 -6%</div>
         </div>
         <div class="weapon-card selected" data-id="rifle">
           <div class="check"></div>
@@ -656,8 +680,9 @@
 <!-- HUD -->
 <div id="hud">
   <div id="controlsTip">
-    <kbd>WASD</kbd> 移动 <kbd>Shift</kbd> 跑 <kbd>空格</kbd> 跳<br>
-    <kbd>1</kbd> 主武器 <kbd>2</kbd> 副武器 <kbd>3</kbd> 刀 <kbd>4</kbd> 手雷 <kbd>G</kbd> 烟雾弹 <kbd>R</kbd> 换弹 <kbd>Tab</kbd> 战绩
+    <kbd>WASD</kbd> 移动 <kbd>Shift</kbd> 跑 <kbd>Ctrl</kbd> 蹲 <kbd>空格</kbd> 跳<br>
+    <kbd>1</kbd> 主武器 <kbd>2</kbd> 副武器 <kbd>3</kbd> 刀 <kbd>4</kbd> 手雷 <kbd>G</kbd> 烟雾弹 <kbd>R</kbd> 换弹 <kbd>Tab</kbd> 战绩<br>
+    <kbd>左键</kbd> 轻击/射击 · <kbd>右键</kbd> 重击·前摇(近战)/开镜(枪械) · <kbd>滚轮</kbd> 切枪
   </div>
   <div id="killfeed"></div>
   <div id="crosshair">
@@ -669,6 +694,7 @@
     </div>
     <div id="scopeOverlay"><div id="scopeReticle"><span id="scopeDot"></span></div></div>
   <div id="hitmarker"></div>
+  <div id="heavyChargeWrap"><div id="heavyChargeFill"></div></div>
   <div id="damageOverlay"></div>
   <div id="deathOverlay">
     <div class="death-box">

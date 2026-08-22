@@ -82,6 +82,45 @@ const HIT_ZONES = [
 // 脚外缘 (0.33,0.02) → 0.99；手臂上外角 (0.42,1.52) → 0.71。r=1.02 够，留到 1.06。
 const HIT_BROAD_Y = 0.95;
 const HIT_BROAD_R = 1.06;
+
+// ---------------------------------------------------------------- 靶子命中盒
+// 靶子用的是外部模型（12.glb），姿态和玩家胶囊完全不同，所以**必须单独一套盒子**。
+// 实测该模型是张开四肢的站姿：肩宽 0.755m、两腿外张间距约 0.41m、
+// 中间 0.34m 宽是空的、脚掌前后铺开 0.29m。
+// 直接套玩家的 HIT_ZONES（躯干 r=0.34 / 腿 ox=±0.13）会同时犯两个错：
+// 看得见的腿在判定盒外（打腿不掉血），判定盒覆盖的中轴空档却能中弹（打空气掉血）。
+//
+// 下面这张表是 tools/fitzones.js 按 dummy.mesh 的**实际表面**拟合出来的，
+// 不是手填的：按面积加权撒 3 万个表面采样点 → 高度切层定竖直区间 →
+// 层内沿 X 做 1D k-means 分出左右肢 → 取半径分位数（不是最大值，避免盒子虚胖）。
+// 实测表面覆盖率 92.6%，无连续死区（最差单段 y0.5~0.6 漏 18%）。
+//
+// 比玩家表多一个 oz 字段：沿目标**朝向前后**的偏移。玩家是左右对称的胶囊，
+// 只需要 ox；这个模型的脚掌明显前伸、头略后仰，不给 oz 就套不准。
+// 腿拆成脚/小腿/大腿三段是因为腿是**斜的**——单根竖直柱要么套不住、
+// 要么按分位数被压到 0.10 这种连小腿都包不住的值。
+const DUMMY_ZONES = [
+  { zone: 'head',  mult: 2.35, kind: 'sphere', y: 1.74, oz: 0.03, r: 0.23 },
+  // 躯干下延到 0.86 接住骨盆：若从 0.98 起，而腿柱轴心在 ±0.20 外侧，
+  // 中间那块髋部就没有任何盒子覆盖，会出现「瞄着胯打却不掉血」。
+  { zone: 'torso', mult: 1.00, kind: 'cyl', y0: 0.86, y1: 1.45, r: 0.30, ox: 0.00,  oz: 0.00 },
+  // 张开的双臂，轴心在 ±0.15、半径 0.20 —— 外缘到 0.35，比躯干 0.30 更靠外，
+  // 侧面来的攻击先中手臂，和玩家表同一套设计意图。
+  { zone: 'arm',   mult: 0.78, kind: 'cyl', y0: 1.30, y1: 1.58, r: 0.21, ox: -0.15, oz: -0.03 },
+  { zone: 'arm',   mult: 0.78, kind: 'cyl', y0: 1.30, y1: 1.58, r: 0.20, ox: 0.15,  oz: -0.03 },
+  // 小腿段
+  { zone: 'leg',   mult: 0.80, kind: 'cyl', y0: 0.02, y1: 0.52, r: 0.12, ox: -0.23, oz: 0.07 },
+  { zone: 'leg',   mult: 0.80, kind: 'cyl', y0: 0.02, y1: 0.52, r: 0.11, ox: 0.26,  oz: 0.07 },
+  // 大腿段（比小腿更靠内，因为腿是外张的）
+  { zone: 'leg',   mult: 0.80, kind: 'cyl', y0: 0.52, y1: 0.90, r: 0.09, ox: -0.20, oz: 0.07 },
+  { zone: 'leg',   mult: 0.80, kind: 'cyl', y0: 0.52, y1: 0.90, r: 0.13, ox: 0.11,  oz: 0.07 },
+  // 脚掌。不给这一对的话 y0~0.1 段漏 43%，是全身最大的死区。
+  { zone: 'leg',   mult: 0.80, kind: 'cyl', y0: 0.00, y1: 0.16, r: 0.12, ox: -0.21, oz: 0.05 },
+  { zone: 'leg',   mult: 0.80, kind: 'cyl', y0: 0.00, y1: 0.16, r: 0.11, ox: 0.29,  oz: 0.13 },
+];
+// 靶子的广相球。由 fitzones.js 一并算出：同时外切网格本体和上面所有盒子。
+const DUMMY_BROAD_Y = 0.95;
+const DUMMY_BROAD_R = 1.07;
 // 部位中文名，只用于击杀提示
 const ZONE_LABEL = { head: '头部', torso: '躯干', arm: '手臂', leg: '腿部' };
 
@@ -95,6 +134,11 @@ function dummyWire(d) {
     resetIn: d.alive ? 0 : Math.max(0, d.resetAt - Date.now()),
   };
 }
+
+// 蹲下时整个命中模型的整体下移量（米）。站姿视线 1.55、蹲姿视线 0.80，
+// 差 0.75；这里取 0.75 让判定与客户端视觉一致——蹲下躲爆头的意义在于
+// 头球跟着压到 1.55 以下，平视打过去的弹会先落在躯干/手臂上。
+const CROUCH_DROP = 0.75;
 
 
 // ---------------------------------------------------------------
@@ -143,31 +187,31 @@ const SPRINT_SPEED = 6.6;
 const WEAPONS = {
   knife: {
     id: 'knife', name: '战术匕首', type: 'melee',
-    damage: 30, range: 2.4, cooldown: 380, arcDot: 0.45,
+    damage: 30, range: 2.4, cooldown: 320, arcDot: 0.45,
     moveSpeed: 1.15,
     color: 0xc0c0c0,
   },
   axe: {
     id: 'axe', name: '消防斧', type: 'melee',
-    damage: 60, range: 3.0, cooldown: 950, arcDot: 0.55,
+    damage: 55, range: 3.0, cooldown: 780, arcDot: 0.55,
     moveSpeed: 0.96,
     color: 0xcc3333,
   },
   katana: {
     id: 'katana', name: '武士刀', type: 'melee',
-    damage: 40, range: 3.2, cooldown: 560, arcDot: 0.5,
+    damage: 45, range: 3.2, cooldown: 480, arcDot: 0.5,
     moveSpeed: 1.06,
     color: 0x8a8a8a,
   },
     kukri: {
       id: 'kukri', name: '尼泊尔军刀', type: 'melee',
-      damage: 45, range: 2.6, cooldown: 450, arcDot: 0.5,
+      damage: 40, range: 2.6, cooldown: 420, arcDot: 0.5,
       moveSpeed: 1.12,
       color: 0x9aa0a0,
     },
     chainsaw: {
       id: 'chainsaw', name: '电锯', type: 'melee',
-      damage: 30, range: 2.7, cooldown: 250, arcDot: 0.6,
+      damage: 30, range: 2.7, cooldown: 300, arcDot: 0.6,
       moveSpeed: 0.90,
       color: 0xff6600,
     },
@@ -212,14 +256,16 @@ const WEAPONS = {
   },
   shotgun: {
     id: 'shotgun', name: '霰弹枪', type: 'ranged',
-    damage: 13, mag: 6, reserve: 24, cooldown: 900, range: 45,
-    pellets: 8, spread: 0.050, reloadTime: 2.3, auto: false,
-    bloom: 0.0440, bloomMax: 0.075, bloomDecay: 0.028,
-    moveSpread: 0.020, airSpread: 0.030, adsSpread: 0.80,
-    // 霰弹枪的腰射惩罚故意给得最小：它本来就是靠 0.05 的弹丸散布吃近距离的，
+    damage: 18, mag: 8, reserve: 32, cooldown: 700, range: 55,
+    pellets: 10, spread: 0.060, reloadTime: 2.1, auto: false,
+    bloom: 0.0380, bloomMax: 0.070, bloomDecay: 0.032,
+    moveSpread: 0.018, airSpread: 0.028, adsSpread: 0.65,
+    // 霰弹枪的腰射惩罚故意给得最小：它本来就是靠 0.06 的弹丸散布吃近距离的，
     // 再叠一个大锥角只会把它从「近战王」变成「什么距离都不行」。
-    hipSpread: 0.016, recoil: 0.0330, recoilH: 0.0080, recoilRamp: 0.55,
-    moveSpeed: 0.96,
+    // 强化后弹丸从 8 提到 10、单发伤害从 13 提到 18，总输出 180，
+    // 但散射也从 0.05 扩到 0.06，远距离散布更开，近距离还是一击死。
+    hipSpread: 0.014, recoil: 0.0400, recoilH: 0.0100, recoilRamp: 0.50,
+    moveSpeed: 0.94,
     color: 0x553311,
   },
   rifle: {
@@ -304,18 +350,44 @@ const SMOKE_MAX = 2;
 // 对不上就会出现「看到的是收尾重砍，挨的是第一段伤害」。
 const MELEE_COMBO_WINDOW = 900;
 const MELEE_COMBO = {
-  knife: [{ dmg: 1.00, cd: 0.58 },
-          { dmg: 1.00, cd: 0.58 },
-          { dmg: 1.45, cd: 1.30, arcK: 1.35, rngK: 1.15 }],
-  kukri: [{ dmg: 1.00, cd: 0.62 },
-          { dmg: 1.15, cd: 1.25 }],
-  katana: [{ dmg: 1.00, cd: 0.60 },
-           { dmg: 1.00, cd: 0.60 },
-           { dmg: 1.55, cd: 1.35, arcK: 0.85 }],
+  knife: [{ dmg: 1.00, cd: 1.00 },
+          { dmg: 1.00, cd: 1.00 },
+          { dmg: 1.50, cd: 1.50, arcK: 1.35, rngK: 1.15 }],
+  kukri: [{ dmg: 1.00, cd: 1.00 },
+          { dmg: 1.20, cd: 1.30 }],
+  katana: [{ dmg: 1.00, cd: 1.00 },
+           { dmg: 1.10, cd: 1.10 },
+           { dmg: 1.40, cd: 1.45, arcK: 0.85 }],
   axe:   [{ dmg: 1.00, cd: 1.00 },
-          { dmg: 1.10, cd: 1.15, arcK: 0.85 }],
+          { dmg: 1.10, cd: 1.10, arcK: 0.85 }],
   chainsaw: [{ dmg: 1.00, cd: 1.00 },
-             { dmg: 1.00, cd: 1.00 }],
+             { dmg: 1.30, cd: 1.10 }],
+};
+
+// ---------------------------------------------------------------
+// 近战重击（右键，带前摇）。与轻击完全独立：
+//   dmg     重击绝对伤害（不乘轻击基础值）
+//   windup  前摇秒数——右键一下就进前摇，走完由 tick 自动结算伤害；
+//           没有「松手释放」，这刀点了就要落地，唯一的反制是前摇本身
+//   cd      重击收势秒数（从结算时刻起算）——一刀总时长 = windup + cd
+//   s       挥砍弧线风格（与客户端 MELEE_ARC 对齐）
+//   rngK/arcK 范围与扇区倍率（乘在武器基础 range / arcDot 上）
+// 客户端 game_v2.js 里有同一张表，两边必须逐字一致：
+// 客户端靠它播前摇动画，服务端靠它把结算排队到 tick。
+// 一刀总时长（前摇+收势）：匕首 1.0s · 尼泊尔 1.3s · 电锯 1.4s
+// · 武士刀 1.45s · 斧 1.85s——全部落在 1~2 秒一重刀的节奏里。
+//
+// 动作编排：轻击走**横向**（左右削）、重击走**竖向**（上下劈），
+// 一横一竖让两种攻击一眼可辨。例外是匕首（短刃，突刺才是杀招）
+// 和电锯（靠链条切割，动作是往前压锯）。
+// s 只驱动客户端表现，但仍要两端一致——否则改客户端时没人记得回来看这张表。
+// ---------------------------------------------------------------
+const MELEE_HEAVY = {
+  knife:    { dmg: 60,  windup: 0.45, cd: 0.55, s: 'lunge',    rngK: 1.15, arcK: 1.35 },
+  kukri:    { dmg: 66,  windup: 0.60, cd: 0.70, s: 'overhead', rngK: 1.10, arcK: 0.90 },
+  katana:   { dmg: 66,  windup: 0.70, cd: 0.75, s: 'diagonal', rngK: 1.10, arcK: 0.85 },
+  axe:      { dmg: 80,  windup: 0.90, cd: 0.95, s: 'cleave',   rngK: 1.05, arcK: 0.85 },
+  chainsaw: { dmg: 62,  windup: 0.65, cd: 0.75, s: 'sawPush',  rngK: 1.05, arcK: 0.90 },
 };
 function meleeStep(id, stage) {
   const c = MELEE_COMBO[id] || MELEE_COMBO.knife;
@@ -573,30 +645,48 @@ function rayCylinderY(o, d, cx, cz, r, y0, y1) {
   return best;
 }
 
-// 对一个玩家做分部位求交。返回 { t, zone, mult } 或 null。
+// 对一个目标做分部位求交。返回 { t, zone, mult } 或 null。
 // 取**最近**命中而不是按部位优先级：手臂挡在胸口前面时就该判成手臂，
 // 这也是上面刻意让手臂柱比躯干柱更靠外的原因。
+//
+// 玩家和靶子走**不同的区域表**：玩家是收拢直立的胶囊（HIT_ZONES），
+// 靶子是外部模型的张开姿态（DUMMY_ZONES，见那里的说明）。
+// 靠 q.isDummy 分流，而不是给靶子写第二个函数——重击那个 bug 的教训就是
+// 「复制一份几何判定出去，两份必然各自演化」，所以这里只允许有一份求交逻辑。
 function raycastPlayerZones(o, d, q, maxT) {
+  const dummy = !!q.isDummy;
+  const zones = dummy ? DUMMY_ZONES : HIT_ZONES;
+  // 蹲下：整个命中模型（含广相球）向下平移。站姿部位以 pos.y 为基准，
+  // 蹲下时视野压到 0.8、躯干跟着下沉，打头更难、打胸口可能变成打脸。
+  // 用单一的 drop 常量做平移，而不是重排部位表，保证「蹲下=整体矮一截」。
+  // 靶子不会蹲。
+  const drop = (!dummy && q.crouch) ? CROUCH_DROP : 0;
   // 广相。raySphere 在「起点已在球内」时返回的是远交点（>0），也算命中，
   // 所以这里不用额外补贴身判定；返回 null 才是真的没交集。
-  const bt = raySphere(o, d, q.pos.x, q.pos.y + HIT_BROAD_Y, q.pos.z, HIT_BROAD_R);
+  const by = dummy ? DUMMY_BROAD_Y : HIT_BROAD_Y;
+  const br = dummy ? DUMMY_BROAD_R : HIT_BROAD_R;
+  const bt = raySphere(o, d, q.pos.x, q.pos.y + by - drop, q.pos.z, br);
   if (bt === null || bt >= maxT) return null;
 
   // 体侧方向 = 朝向在水平面内左转 90°。左右对称，所以正负无所谓，只要垂直于朝向。
   const fwd = forwardFromYawPitch(q.yaw || 0, 0);
   const fh = Math.hypot(fwd.x, fwd.z) || 1;
   const sx = -fwd.z / fh, sz = fwd.x / fh;
+  // 朝向的水平单位向量。DUMMY_ZONES 的 oz 沿这个方向偏移（+oz = 目标身前）。
+  const bx = fwd.x / fh, bz = fwd.z / fh;
 
   let best = null;
-  for (let i = 0; i < HIT_ZONES.length; i++) {
-    const z = HIT_ZONES[i];
+  for (let i = 0; i < zones.length; i++) {
+    const z = zones[i];
     let t;
     if (z.kind === 'sphere') {
-      t = raySphere(o, d, q.pos.x, q.pos.y + z.y, q.pos.z, z.r);
+      const cx = q.pos.x + sx * (z.ox || 0) + bx * (z.oz || 0);
+      const cz = q.pos.z + sz * (z.ox || 0) + bz * (z.oz || 0);
+      t = raySphere(o, d, cx, q.pos.y + z.y - drop, cz, z.r);
     } else {
-      const cx = q.pos.x + sx * (z.ox || 0);
-      const cz = q.pos.z + sz * (z.ox || 0);
-      t = rayCylinderY(o, d, cx, cz, z.r, q.pos.y + z.y0, q.pos.y + z.y1);
+      const cx = q.pos.x + sx * (z.ox || 0) + bx * (z.oz || 0);
+      const cz = q.pos.z + sz * (z.ox || 0) + bz * (z.oz || 0);
+      t = rayCylinderY(o, d, cx, cz, z.r, q.pos.y + z.y0 - drop, q.pos.y + z.y1 - drop);
     }
     if (t === null || t >= maxT) continue;
     if (best === null || t < best.t) best = { t, zone: z.zone, mult: z.mult };
@@ -835,11 +925,14 @@ class Game {
       lastFire: 0,
       lastMelee: 0,
       comboStage: 0,     // 近战连段：这一刀播到第几段（见 meleeAttack）
+      heavyStrikeAt: 0,  // 重击前摇结束时刻的时间戳，0 = 没有挂着的重击（见 handleHeavy/tick）
+      lastHeavy: 0,      // 上次重击结算的时间戳（重击收势计时用）
         lastSmoke: 0,
         lastGrenade: 0,
       triggerDown: false,
       bloom: 0,
       ads: false,
+      crouch: false,         // 蹲下：部位判定整体下移（见 raycastPlayerZones）
       reloading: false,
       reloadEnd: 0,
       respawnAt: 0,
@@ -891,6 +984,9 @@ class Game {
         break;
       case 'attack':
         this.handleAttack(p, msg);
+        break;
+      case 'heavy':
+        this.handleHeavy(p, msg);
         break;
       case 'switch':
         this.handleSwitch(p, msg);
@@ -999,6 +1095,8 @@ class Game {
                                // 「一条命的开始」这个不变量落在同一个地方）
     p.comboStage = 0;          // 重生后连段归零，不要接着上一条命的段号
     p.lastMelee = 0;
+    p.heavyStrikeAt = 0;       // 重生打断挂着的重击前摇（死了那刀不算数）
+    p.lastHeavy = 0;           // 重击收势也随复活重置
   }
 
   handleState(p, msg) {
@@ -1014,6 +1112,7 @@ class Game {
     if (typeof msg.yaw === 'number') p.yaw = msg.yaw;
     if (typeof msg.pitch === 'number') p.pitch = clamp(msg.pitch, -1.55, 1.55);
     if (typeof msg.ads === 'boolean') p.ads = msg.ads;
+    if (typeof msg.crouch === 'boolean') p.crouch = msg.crouch;
   }
 
   handleAttack(p, msg) {
@@ -1035,6 +1134,23 @@ class Game {
     if (down && !wpn.auto) this.tryFire(p, yaw, pitch);
   }
 
+  // 重击：右键一下，进入前摇，前摇结束时由 tick 结算伤害。
+  // 客户端只发一条 { t:'heavy', down:true }，没有（也不需要）松手消息——
+  // 前摇是承诺出去的一刀，点了就要落地；反制它靠的是这 1~2 秒的硬直，
+  // 不是靠「提前松手取消」。
+  // 服务端把结算时刻记在 heavyStrikeAt、由 tick 到点触发，而不是收到消息
+  // 立刻判定：前摇的意义就是「可以被预判、可以被躲」，判定必须发生在前摇走完之后。
+  handleHeavy(p, msg) {
+    if (!p.joined || !p.alive) return;
+    if (p.current !== 'melee') return;
+    if (!msg.down) return;                              // 不再有「松手释放」语义
+    const hv = MELEE_HEAVY[p.melee] || MELEE_HEAVY.knife;
+    const now = Date.now();
+    if (p.heavyStrikeAt) return;                        // 前摇进行中，不接受二次起手
+    if (now - p.lastHeavy < hv.cd * 1000) return;       // 上一刀收势没走完
+    p.heavyStrikeAt = now + hv.windup * 1000;
+  }
+
   handleSwitch(p, msg) {
     if (!p.joined) return;
     if (msg.slot === 'melee') { p.current = 'melee'; }
@@ -1045,6 +1161,8 @@ class Game {
       p.bloom = 0;             // 换枪清零累积散射（每把枪的 bloomMax 不同，不能沿用）
       p.comboStage = 0;        // 收刀就断连段，回来重新从第一段起手
       p.lastMelee = 0;
+      p.heavyStrikeAt = 0;     // 切枪打断重击前摇（服务端这边不该继续排队等结算）
+      p.lastHeavy = 0;         // 重击收势随切枪重置
   }
 
   handleReload(p) {
@@ -1118,6 +1236,15 @@ class Game {
       if (p.alive && p.current !== 'melee' && p.triggerDown) {
         const wpn = WEAPONS[p.ranged];
         if (wpn.auto) this.tryFire(p, p.yaw, p.pitch);
+      }
+
+      // 重击前摇结束 → 结算伤害。
+      // 方向取**当前**朝向（p.yaw/p.pitch）：前摇 1~2 秒里玩家还能微调瞄头，
+      // 这既是对「前摇可以被预判」的风险补偿，也让前摇成为双方博弈的一部分。
+      if (p.alive && p.current === 'melee' && p.heavyStrikeAt && now >= p.heavyStrikeAt) {
+        p.heavyStrikeAt = 0;
+        p.lastHeavy = now;
+        this.heavyAttack(p, p.yaw, p.pitch);
       }
 
       // 换弹完成
@@ -1230,6 +1357,7 @@ class Game {
         grenadeCount: p.grenadeCount,
         smokeCount: p.smokeCount,
         reloading: p.reloading,
+        crouch: p.crouch,
       });
     }
     this.broadcast({ t: 'snapshot', players });
@@ -1360,10 +1488,78 @@ class Game {
     });
   }
 
+  // 近战候选目标收集：测距 → 水平扇区 → 掩体遮挡 → 部位判定。
+  // 轻击（meleeAttack）与重击（heavyAttack）共用这一份几何，两者只在
+  // 「伤害怎么算」和「range/arcDot 从哪张表取」上不同。
+  //
+  // 为什么必须共用：这段判定原先在轻击和重击里各写了一遍，而重击那份
+  // 漏掉了 this.dummies —— 于是对着练枪靶子重击永远是 0 伤害、没有命中
+  // 反馈。轻击那边的注释本来就写着「复制一份几何判定给靶子的话，两份
+  // 必然各自演化，改一处忘一处」，重击就是被复制出去又走岔了的那一份。
+  // 修法不是给重击补一行靶子遍历，而是让它们没有第二份可以走岔。
+  //
+  // 返回 [{ target, zone, mult }]：命中与否完全由这里决定，调用方只负责
+  // 把 mult 乘进自己的基础伤害、并按 isDummy 分流到 damage/damageDummy。
+  meleeTargets(p, yaw, pitch, range, arcDot) {
+    const dir = normalize(forwardFromYawPitch(yaw, pitch));
+    // 近战扇区是**水平**的，所以要用 dir 的水平投影再归一化。
+    const fh = Math.hypot(dir.x, dir.z);
+    const fx = fh > 1e-6 ? dir.x / fh : 0;
+    const fz = fh > 1e-6 ? dir.z / fh : 0;
+
+    // 靶子和玩家走同一套测距/扇区/遮挡判定，所以合并成一个候选表遍历。
+    const targets = [];
+    for (const q of this.players.values()) {
+      if (q === p || !q.joined || !q.alive) continue;
+      targets.push(q);
+    }
+    for (const dm of this.dummies) if (dm.alive) targets.push(dm);
+
+    const hits = [];
+    for (const q of targets) {
+      const dx = q.pos.x - p.pos.x;
+      const dz = q.pos.z - p.pos.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist > range + PLAYER_RADIUS) continue;
+      if (Math.abs(q.pos.y - p.pos.y) > 2.5) continue;
+
+      // 目标必须在挥砍扇区内
+      const dot = dist > 0.001 ? (dx / dist) * fx + (dz / dist) * fz : 1;
+      if (dot < arcDot) continue;
+
+      // 有掩体阻挡则近战无法命中
+      const origin = { x: p.pos.x, y: p.pos.y + PLAYER_EYE, z: p.pos.z };
+      const rayDir = { x: fx, y: 0, z: fz };
+      let blocked = false;
+      for (const box of BOXES) {
+        const min = { x: box.x - box.w / 2, y: 0, z: box.z - box.d / 2 };
+        const max = { x: box.x + box.w / 2, y: box.h, z: box.z + box.d / 2 };
+        const t = rayAABB(origin, rayDir, min, max);
+        if (t !== null && t < dist) { blocked = true; break; }
+      }
+      if (blocked) continue;
+
+      // 近战部位判定：沿攻击方朝向的水平射线打到目标身上哪个部位。
+      // 用已有的 raycastPlayerZones，但 y 方向是水平的（rayDir.y = 0），
+      // 这样命中哪个部位完全由「攻击方眼睛高度」和「目标各部位的竖直区间」决定，
+      // 符合直觉——蹲着砍腿、站着砍胸、跳起来劈头。
+      // 射线没打中任何部位时兜底记 torso：几何上已经判定在范围+扇区内了，
+      // 不能因为部位求交的边界误差把这一刀吞掉。
+      const zh = raycastPlayerZones(origin, rayDir, q, dist + PLAYER_RADIUS);
+      hits.push({ target: q, zone: zh ? zh.zone : 'torso', mult: zh ? zh.mult : 1.0 });
+    }
+    return hits;
+  }
+
   meleeAttack(p, yaw, pitch) {
     const now = Date.now();
     const wpn = WEAPONS[p.melee];
     const combo = MELEE_COMBO[p.melee] || MELEE_COMBO.knife;
+
+    // 重击前摇期间不接受轻击：重击是承诺出去的一刀，前摇中塞轻击会把
+    // 两套判定叠在同一段时间里（轻击立刻结算 + 前摇结束又结算一次），
+    // 客户端 localMelee 也有同一条检查，两边必须一致否则动作和伤害错位。
+    if (p.heavyStrikeAt) return;
 
     // 这一刀是第几段：窗口内接续，超时从头。规则和客户端 localMelee 逐字一致。
     // 冷却按**上一段**的 cd 倍率算——收尾重砍之后要等更久才能再起手。
@@ -1380,63 +1576,23 @@ class Game {
     const range = wpn.range * (step.rngK || 1);
     // arcDot 是命中所需的最小 dot：arcK > 1 收窄扇区，< 1 放宽。
     const arcDot = clamp(wpn.arcDot * (step.arcK || 1), -1, 1);
-    const amount = wpn.damage * (step.dmg || 1);
+    const baseDmg = wpn.damage * (step.dmg || 1);
 
-    const dir = normalize(forwardFromYawPitch(yaw, pitch));
-    // 近战扇区是**水平**的，所以要用 dir 的水平投影再归一化。
-    // 原来直接拿 3D 的 dir 去点乘一个水平方向，等于把 dot 白乘了一个
-    // cos(pitch)：pitch -1.2 时 cos=0.362，比最宽的匕首 arcDot(0.45) 还小，
-    // 于是稍微低头就完全打不中人——贴着脸也不行。俯仰方向的容差由下面的
-    // |dy| <= 2.5 负责，不该再混进扇区判定里。
-    // 这也和客户端画出来的一致：MELEE_PITCH_K/MAX 把刀压在近水平（最多 18°），
-    // 扇区跟着水平才不会「看着砍在身上、判定说没中」。
-    const fh = Math.hypot(dir.x, dir.z);
-    const fx = fh > 1e-6 ? dir.x / fh : 0;
-    const fz = fh > 1e-6 ? dir.z / fh : 0;
     const hitPlayers = [];
     const hitDummies = [];
+    // 每个命中者的部位，用于击杀提示
+    const hitZones = {};
 
-    // 靶子和玩家走同一套测距/扇区/遮挡判定，所以合并成一个候选表遍历。
-    // 复制一份几何判定给靶子的话，两份必然各自演化，改一处忘一处。
-    const targets = [];
-    for (const q of this.players.values()) {
-      if (q === p || !q.joined || !q.alive) continue;
-      targets.push(q);
-    }
-    for (const dm of this.dummies) if (dm.alive) targets.push(dm);
-
-    for (const q of targets) {
-      const dx = q.pos.x - p.pos.x;
-      const dz = q.pos.z - p.pos.z;
-      const dist = Math.sqrt(dx * dx + dz * dz);
-      if (dist > range + PLAYER_RADIUS) continue;
-      if (Math.abs(q.pos.y - p.pos.y) > 2.5) continue;
-
-      // 目标必须在挥砍扇区内
-      const dot = dist > 0.001 ? (dx / dist) * fx + (dz / dist) * fz : 1;
-      if (dot < arcDot) continue;
-
-      // 有掩体阻挡则近战无法命中。这条射线也必须是水平的：下面比的是
-      // t < dist，而 dist 是**水平**距离，拿带俯仰的 3D 方向去比就是两套
-      // 尺度混用（俯角一大，射线主要往下跑，t 早早就超过水平距离）。
-      // rayAABB 对 d.y=0 有专门分支，退化成「眼睛高度是否落在箱子的竖直区间内」。
-      const origin = { x: p.pos.x, y: p.pos.y + PLAYER_EYE, z: p.pos.z };
-      const rayDir = { x: fx, y: 0, z: fz };
-      let blocked = false;
-      for (const box of BOXES) {
-        const min = { x: box.x - box.w / 2, y: 0, z: box.z - box.d / 2 };
-        const max = { x: box.x + box.w / 2, y: box.h, z: box.z + box.d / 2 };
-        const t = rayAABB(origin, rayDir, min, max);
-        if (t !== null && t < dist) { blocked = true; break; }
-      }
-      if (blocked) continue;
-
+    for (const h of this.meleeTargets(p, yaw, pitch, range, arcDot)) {
+      const q = h.target;
+      const amount = Math.round(baseDmg * h.mult);
       if (q.isDummy) {
         hitDummies.push(q.id);
         this.damageDummy(q, amount, null);
       } else {
         hitPlayers.push(q.id);
-        this.damage(q, p, wpn, amount);
+        hitZones[q.id] = h.zone;
+        this.damage(q, p, wpn, amount, h.zone);
       }
     }
 
@@ -1447,6 +1603,56 @@ class Game {
       stage,
       hitPlayers,
       hitDummies,
+      hitZones,
+    });
+  }
+
+  // 重击判定。与轻击（meleeAttack）共享 meleeTargets 的几何判定，但：
+  //   - 伤害走 MELEE_HEAVY 的绝对伤害（乘部位倍率）
+  //   - 范围/扇区走 MELEE_HEAVY 的 rngK/arcK
+  //   - 广播带 heavy:true，客户端据此播重击弧线而不是连段弧线
+  //   - 释放瞬间打断轻击连段（comboStage 归零），重击是独立节奏
+  heavyAttack(p, yaw, pitch) {
+    const hv = MELEE_HEAVY[p.melee] || MELEE_HEAVY.knife;
+    const wpn = WEAPONS[p.melee];
+    const range = wpn.range * (hv.rngK || 1);
+    const arcDot = clamp(wpn.arcDot * (hv.arcK || 1), -1, 1);
+    const baseDmg = hv.dmg;
+
+    // 重击打断轻击连段：蓄力期间已经停了连击节奏，重击这一刀不该接在连段段号后面。
+    p.comboStage = 0;
+    p.lastMelee = 0;
+
+    const hitPlayers = [];
+    const hitDummies = [];
+    const hitZones = {};
+
+    // 走和轻击同一份 meleeTargets：靶子因此和玩家一样会被重击打到。
+    // 这里原先是一份独立的遍历，且只扫 this.players —— 对靶子重击永远 0 伤害。
+    for (const h of this.meleeTargets(p, yaw, pitch, range, arcDot)) {
+      const q = h.target;
+      const amount = Math.round(baseDmg * h.mult);
+      if (q.isDummy) {
+        hitDummies.push(q.id);
+        this.damageDummy(q, amount, null);
+      } else {
+        hitPlayers.push(q.id);
+        hitZones[q.id] = h.zone;
+        this.damage(q, p, wpn, amount, h.zone);
+      }
+    }
+
+    this.broadcast({
+      t: 'melee',
+      id: p.id,
+      weaponId: wpn.id,
+      stage: 0,
+      heavy: true,
+      hitPlayers,
+      // hitDummies 必须带上：客户端 handleMeleeEvent 靠它决定要不要出命中标记，
+      // 缺这个字段的话就算伤害进去了，打靶子也依然是「没有任何反馈」。
+      hitDummies,
+      hitZones,
     });
   }
 
@@ -1474,8 +1680,8 @@ class Game {
 
   // zone 是命中部位（'head'/'torso'/'arm'/'leg'），只用于击杀提示；
   // 倍率已经在调用方乘进 amount 里了，这里不再乘第二遍。
-  // 近战和手雷不传 zone：近战是水平扇区判定、手雷是球形范围衰减，
-  // 两者都没有「命中点」这个概念，硬凑一个部位出来只会是假的。
+  // 手雷不传 zone：手雷是球形范围衰减，没有「命中点」这个概念。
+  // 近战已加入部位判定：沿攻击方水平朝向射线打到目标的哪个部位就算哪个。
   damage(victim, attacker, wpn, amount, zone) {
     if (!victim.alive) return;
     victim.hp -= amount;
