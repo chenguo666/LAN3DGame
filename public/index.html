@@ -137,6 +137,15 @@
     background: #1a1513;
   }
     .weapon-card.disabled { opacity: .55; cursor: not-allowed; border-style: dashed; }
+  /* 角色卡比武器卡承载的文字多（三行说明），单独给一个更宽的最小列宽，
+     否则「右键举盾：正面免疫…」那行会在 150px 的格子里折成四行。 */
+  #heroGrid { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .hero-card.selected { border-color: var(--accent2); box-shadow: 0 0 0 1px var(--accent2), 0 8px 24px rgba(90,200,255,.15); }
+  .hero-card.selected .check { background: var(--accent2); border-color: var(--accent2); box-shadow: 0 0 0 3px rgba(90,200,255,.25); }
+  /* 角色锁定配装时整块变灰。pointer-events:none 是关键——只加 .disabled 到
+     卡片上的话，鼠标还能点到卡片之间的空隙，看着像「点了没反应」。 */
+  .weapon-section.locked { opacity: .45; pointer-events: none; }
+  .weapon-section.locked h2 .badge { background: var(--muted); }
   .weapon-card .w-name { font-size: 15px; font-weight: 600; }
   .weapon-card .w-type { font-size: 12px; color: var(--muted); margin-top: 2px; }
   .weapon-card .w-stats { font-size: 12px; color: #b7c0ca; margin-top: 8px; line-height: 1.6; }
@@ -585,6 +594,26 @@
     </div>
 
     <div class="weapon-section">
+      <h2><span class="badge">角色</span> 选择干员</h2>
+      <div class="weapon-grid" id="heroGrid">
+        <div class="weapon-card hero-card selected" data-id="assault">
+          <div class="check"></div>
+          <div class="w-name">🎖️ 突击兵</div>
+          <div class="w-type">标准 · 全武器可用</div>
+          <div class="w-stats">生命 100 · 移速 基准<br>可自由搭配近战与主武器</div>
+        </div>
+        <div class="weapon-card hero-card" data-id="dunshan">
+          <div class="check"></div>
+          <div class="w-name">🛡️ 盾山</div>
+          <div class="w-type">重装 · 仅手枪</div>
+          <div class="w-stats">生命 200 · 移速 -12%（举盾时更慢）<br>右键切换举盾：1.24×1.9m 大盾，正面免疫，仅面窗可被击穿（×1.5）<br>近战为盾击 · 备弹翻倍 · 无法开镜</div>
+        </div>
+      </div>
+      <!-- 选盾山时，下面两块会整体变灰：配装由角色锁定，不是玩家选的 -->
+      <div class="field-hint" id="heroHint">突击兵：近战 + 主武器自由搭配</div>
+    </div>
+
+    <div class="weapon-section" id="meleeSection">
       <h2><span class="badge">3</span> 近战武器（刀）</h2>
       <div class="weapon-grid" id="meleeGrid">
         <div class="weapon-card selected" data-id="knife">
@@ -620,7 +649,7 @@
       </div>
     </div>
 
-    <div class="weapon-section">
+    <div class="weapon-section" id="rangedSection">
       <h2><span class="badge">1</span> 主武器（副武器自动手枪）</h2>
       <div class="weapon-grid" id="rangedGrid">
         <div class="weapon-card disabled" data-id="pistol">
@@ -641,6 +670,12 @@
           <div class="w-type">全自动 · 持续火力</div>
           <div class="w-stats">伤害 19 · 弹匣 30 · 备弹 120<br>射程 110m · 射速 105ms · 移速 基准</div>
         </div>
+        <div class="weapon-card" data-id="ak47">
+          <div class="check"></div>
+          <div class="w-name">☠️ AK47</div>
+          <div class="w-type">全自动 · 爆头必杀</div>
+          <div class="w-stats"><b>爆头一枪致死</b>（盾山免疫）· 其余部位正常<br>伤害 28 · 弹匣 30 · 备弹 90<br>射程 105m · 射速 135ms · 移速 -8% · 后坐力极高</div>
+        </div>
         <div class="weapon-card" data-id="smg">
           <div class="check"></div>
           <div class="w-name">💨 冲锋枪</div>
@@ -651,7 +686,7 @@
             <div class="check"></div>
             <div class="w-name">🎯 狙击步枪</div>
             <div class="w-type">栓动 · 一枪毙命</div>
-            <div class="w-stats">伤害 150 · 弹匣 5 · 备弹 20<br>射程 160m · 射速 1400ms · 移速 -14%</div>
+            <div class="w-stats">伤害 150 · 弹匣 5 · 备弹 20<br>任意部位一枪致死（盾山除外）<br>射程 160m · 射速 1400ms · 移速 -14%</div>
           </div>
             <div class="weapon-card" data-id="dmr">
               <div class="check"></div>
@@ -672,7 +707,7 @@
     <button id="startBtn" disabled>进 入 游 戏</button>
     <div class="menu-tip">
       <kbd>W A S D</kbd> 移动 · <kbd>Shift</kbd> 疾跑 · <kbd>空格</kbd> 跳跃<br>
-      <kbd>鼠标</kbd> 视角 · <kbd>左键</kbd> 攻击 · <kbd>右键</kbd> 开镜 · <kbd>1</kbd> 主武器 · <kbd>2</kbd> 副武器 · <kbd>3</kbd> 刀 · <kbd>4</kbd> 手雷 · <kbd>G</kbd> 烟雾弹 · <kbd>R</kbd> 换弹 · <kbd>Tab</kbd> 战绩 · <kbd>Esc</kbd> 释放鼠标
+      <kbd>鼠标</kbd> 视角 · <kbd>左键</kbd> 攻击 · <kbd>右键</kbd> 开镜（盾山为举盾开关） · <kbd>1</kbd> 主武器 · <kbd>2</kbd> 副武器 · <kbd>3</kbd> 刀 · <kbd>4</kbd> 手雷 · <kbd>G</kbd> 烟雾弹 · <kbd>R</kbd> 换弹 · <kbd>Tab</kbd> 战绩 · <kbd>Esc</kbd> 释放鼠标
     </div>
   </div>
 </div>

@@ -121,8 +121,65 @@ const DUMMY_ZONES = [
 // 靶子的广相球。由 fitzones.js 一并算出：同时外切网格本体和上面所有盒子。
 const DUMMY_BROAD_Y = 0.95;
 const DUMMY_BROAD_R = 1.07;
+// ---------------------------------------------------------------- 盾山的盾面
+// 盾山举盾时，在 HIT_ZONES 之前额外插入下面这几块。全部是 kind:'box'——
+// 盾牌是一块**平板**，用圆柱近似的话会绕到身体两侧去，侧面来的子弹也会被挡，
+// 而需求是「其他正面攻击无法造成伤害」，侧面/背面必须照常打得穿。
+//
+// 坐标是受击者本地系：ox 沿体侧、oz 沿正前方、y 是世界竖直（与其他表一致）。
+// hw / hd 是沿这两个水平轴的**半长**，y0/y1 仍是上下边界。
+//
+// 关键设计：盾面被拆成「窗下 / 窗上 / 窗左 / 窗右」四块，**刻意不覆盖面窗**。
+// 不能用一整块大盾面再叠一个面窗盒——下面取的是最近命中，两个盒子前表面
+// 在同一个 oz 上，t 会打平，命中哪个变成浮点运气。拆成互不相交的框形之后，
+// 「打进窗口」和「打在盾面」在几何上就是互斥的，不需要任何优先级规则。
+//
+// 盾面尺寸：半宽 0.62（总宽 1.24）、y 0.10 → 2.00（总高 1.90）。
+// 这是第二版尺寸。第一版是半宽 0.46、y 0.30~1.94，实测「保护面积太小」：
+//   - 半宽 0.46 只比张开的手臂外缘（±0.42）宽 4cm，稍微侧一点身子肩膀就露在盾外；
+//   - 下沿 0.30 把整条小腿和脚（腿部盒子从 0.02 起）留在外面，对面照常打腿，
+//     而腿部倍率 0.80 并不低，等于「举着盾还是被打死」，盾的意义没建立起来。
+// 现在半宽 0.62 比手臂外缘宽 20cm（侧身也遮得住），下沿压到 0.10 只留 8cm 脚缝。
+// 面窗尺寸**没有跟着放大**：面窗是这个角色唯一的正面弱点，放大盾面已经让他更强，
+// 再放大窗口就把「有弱点」也一起削掉了。
+//
+// 尺寸自洽校核：面窗半宽 0.15，左右框各半宽 0.235、轴心 ±0.385，
+// 0.15 + 0.235*2 = 0.62 = 盾面半宽；0.15 + 0.235 = 0.385 = 框轴心。改一个要改一串。
+const SHIELD_FACE_OZ = 0.42;   // 盾面到身体中轴的前向距离
+const SHIELD_FACE_HD = 0.055;  // 盾板厚度的一半
+const SHIELD_FACE_HW = 0.62;   // 盾面半宽
+const SHIELD_FACE_Y0 = 0.10;   // 盾面下沿
+const SHIELD_FACE_Y1 = 2.00;   // 盾面上沿
+const SHIELD_WIN_HW = 0.15;    // 面窗半宽
+// 面窗必须**以视线高度为中心**（PLAYER_EYE = 1.55），这是可玩性的硬要求：
+// 攻方站在同高度平射，弹道就在 y=1.55 上，正好穿窗；盾山自己也是平视穿窗开枪。
+// 一开始写的是 1.58~1.80（窗底比眼高 3cm），结果两边都得刻意抬枪才打得中，
+// 而且窗顶到盾顶只剩 0.14，头顶（头部球 1.50~1.90）几乎没被盾遮住。
+// 现在 1.44~1.66 居中于 1.55，窗上还留 0.34 盾面把整个头罩住。
+const SHIELD_WIN_Y0 = 1.44;
+const SHIELD_WIN_Y1 = 1.66;
+// 左右框的半宽由「盾面半宽 - 面窗半宽」二等分得出，轴心再推到两者相接处。
+// 写成表达式而不是抄数字：上面那条自洽校核就不可能因为改了 HW 而失效。
+const SHIELD_SIDE_HW = (SHIELD_FACE_HW - SHIELD_WIN_HW) / 2;   // 0.235
+const SHIELD_SIDE_OX = SHIELD_WIN_HW + SHIELD_SIDE_HW;         // 0.385
+const SHIELD_PLATE = [
+  // 面窗：盾山正面**唯一**能造成伤害的地方。1.5 倍，介于躯干 1.0 与爆头 2.35 之间。
+  { zone: 'glass', mult: 1.50, kind: 'box', ox: 0.000, oz: SHIELD_FACE_OZ, hw: SHIELD_WIN_HW,  hd: SHIELD_FACE_HD, y0: SHIELD_WIN_Y0, y1: SHIELD_WIN_Y1 },
+  // 盾面四块。block:true = 吃掉弹道（弹着点停在盾上、有跳弹火花）但零伤害。
+  { zone: 'shield', mult: 0, block: true, kind: 'box', ox: 0.000, oz: SHIELD_FACE_OZ, hw: SHIELD_FACE_HW, hd: SHIELD_FACE_HD, y0: SHIELD_FACE_Y0, y1: SHIELD_WIN_Y0 },
+  { zone: 'shield', mult: 0, block: true, kind: 'box', ox: 0.000, oz: SHIELD_FACE_OZ, hw: SHIELD_FACE_HW, hd: SHIELD_FACE_HD, y0: SHIELD_WIN_Y1, y1: SHIELD_FACE_Y1 },
+  { zone: 'shield', mult: 0, block: true, kind: 'box', ox:  SHIELD_SIDE_OX, oz: SHIELD_FACE_OZ, hw: SHIELD_SIDE_HW, hd: SHIELD_FACE_HD, y0: SHIELD_WIN_Y0, y1: SHIELD_WIN_Y1 },
+  { zone: 'shield', mult: 0, block: true, kind: 'box', ox: -SHIELD_SIDE_OX, oz: SHIELD_FACE_OZ, hw: SHIELD_SIDE_HW, hd: SHIELD_FACE_HD, y0: SHIELD_WIN_Y0, y1: SHIELD_WIN_Y1 },
+];
+// 举盾时的广相球必须放大，否则盾面永远进不了细分循环（= 盾牌不存在）。
+// 校核最远点（相对中心 y=0.95）：盾上外角 (ox 0.62, y 2.00, oz 0.475)
+// → √(0.62² + 1.05² + 0.475²) = 1.31（下外角 (0.62, 0.10, 0.475) 只有 1.15）。
+// 取 1.42 留余量。放大盾面**必须**同时放大这个数，否则新增的那一圈盾面
+// 会被广相提前判成没打中——症状是「盾比原来大了，但边缘照旧打得穿」。
+const SHIELD_BROAD_R = 1.42;
+
 // 部位中文名，只用于击杀提示
-const ZONE_LABEL = { head: '头部', torso: '躯干', arm: '手臂', leg: '腿部' };
+const ZONE_LABEL = { head: '头部', torso: '躯干', arm: '手臂', leg: '腿部', glass: '面窗', shield: '盾牌' };
 
 // 靶子的上线形式。位置/朝向是常量，但新加入的客户端得知道它们在哪，
 // 所以整份都发——十个靶子一共几百字节，只在 join 时发一次。
@@ -215,6 +272,16 @@ const WEAPONS = {
       moveSpeed: 0.90,
       color: 0xff6600,
     },
+    // 盾击：盾山专属，**不在选枪页面出现**（handleJoin 会按角色强制指定，
+    // 突击兵选到它会被打回 knife）。范围比匕首还短——大盾不是武器是掩体，
+    // 挥出去的是整块板子，所以扇区宽（arcDot 0.62 是「必须正对」）、
+    // 收势慢（640ms），但一下 38 伤害不算低，是盾山唯一的近身解。
+    shieldbash: {
+      id: 'shieldbash', name: '盾击', type: 'melee',
+      damage: 38, range: 2.2, cooldown: 640, arcDot: 0.62,
+      moveSpeed: 0.88,
+      color: 0x6b7280,
+    },
   // 散射/后坐力字段说明（必须与 public/js/game_v2.js 的 WEAPONS 表保持一致）：
   //   spread      第一发的锥形散射半角（弧度）
   //   bloom       每开一枪累加的散射量；bloomMax 上限；bloomDecay 每秒回落量
@@ -278,6 +345,39 @@ const WEAPONS = {
     moveSpeed: 1.00,          // 基准
     color: 0x222222,
   },
+  // AK47：唯一带 headKill 的枪 —— 打中头部直接致死（盾山的 headArmor 豁免，
+  // 见 HEROES 与 rangedHit），其余部位按普通倍率结算。
+  //
+  // 这条特性有多强，得先看没有它会怎样：28 伤害爆头是 28×2.35 = 66，
+  // 满血 100 要两枪。有了 headKill 就是一枪 —— 交火里「先打到头」的价值
+  // 从「打掉三分之二血」跳成「结束战斗」，等于把狙击枪的一击必杀装进一把
+  // 全自动步枪。所以代价必须落在**能不能打到头**上，而不是打中之后的收益上：
+  //   spread 0.0075（步枪 0.005）+ hipSpread 0.048（全枪最高，步枪 0.034）
+  //     → 腰射 10m 落点半径 48cm，比一个人还宽，站着乱扫是打不到头的；
+  //   recoil 0.0165（步枪 0.0090，几乎翻倍）+ recoilRamp 1.55
+  //     → 满 bloom 时每发抬 0.042rad（2.4°），第三发起枪口已经在头顶上方，
+  //       想连着爆头必须点射压枪，而不是按住不放；
+  //   moveSpeed 0.92 + reserve 90（步枪 120）→ 机动和续航都比步枪差。
+  // 换句话说：AK 的爆头必杀是给「停下来、开镜、点射」的人的奖励。
+  //
+  // 躯干 28 → 四枪（112）击杀，cooldown 135ms 下 TTK 405ms，比步枪
+  // （19×6×105 = 525ms）快一档；腿 22（0.80）五枪、手臂 21（0.78）五枪。
+  // 这个差距是故意留的：否则「必须打头」的枪在打不到头的时候就一无是处，
+  // 反而逼人只能贴脸乱扫 —— 那正好是上面一整套散射惩罚要压制的打法。
+  //
+  // bloom = bloomDecay×cooldown/1000 + bloomMax/N，N 取 10（十连发打满上限）：
+  //   0.058×0.135 + 0.060/10 = 0.0138 > 0.00783 ✓（硬约束见上面的说明）
+  ak47: {
+    id: 'ak47', name: 'AK47', type: 'ranged',
+    damage: 28, mag: 30, reserve: 90, cooldown: 135, range: 105,
+    pellets: 1, spread: 0.0075, reloadTime: 2.5, auto: true,
+    headKill: true,
+    bloom: 0.0138, bloomMax: 0.060, bloomDecay: 0.058,
+    moveSpread: 0.020, airSpread: 0.034, adsSpread: 0.50,
+    hipSpread: 0.048, recoil: 0.0165, recoilH: 0.0072, recoilRamp: 1.55,
+    moveSpeed: 0.92,
+    color: 0x6b4a2a,          // 木制护木/枪托
+  },
   smg: {
     id: 'smg', name: '冲锋枪', type: 'ranged',
     // 定位是「近身机动」，和步枪的分工靠**射速换射程**而不是单纯的强弱：
@@ -297,12 +397,12 @@ const WEAPONS = {
   },
     awp: {
       id: 'awp', name: '狙击步枪', type: 'ranged',
-      // 150 → 120。这一改是部位倍率的**直接后果**，不是顺手调平衡：
-      // 满血 100，150 打四肢也是 150×0.78=117 > 100，倍率对这把枪等于不存在，
-      // 一枪爆脚背和一枪爆头没有任何区别。120 之后躯干仍是一枪一个（120），
-      // 手臂 94 / 腿 96 都刚好留一口气，爆头 282 —— 参照 CS 的 AWP
-      // （胸 115、腿不致死）也是这个思路：狙的强度体现在「命中就赢」，
-      // 而不是「打到哪都赢」。
+      // 150（由用户拍板定回来的值）。这个数字的含义要写清楚：
+      // 满血 100 时，四肢 150×0.78=117、腿 150×0.80=120，全都 >100 ——
+      // 也就是说**部位倍率对这把枪等于不存在，打中哪都是一枪一个**。
+      // 这是有意的：狙的强度就体现在「打中即赢」，不要求打准部位。
+      // 唯一还吃倍率的是盾山（200 血）：躯干 150 / 四肢 117~120 都不致死，
+      // 要两枪；爆头 352 才是一枪。盾面另算（glass 1.5，且正面会被整块挡住）。
       damage: 150, mag: 5, reserve: 20, cooldown: 1400, range: 160,
       pellets: 1, spread: 0.0004, reloadTime: 2.6, auto: false,
       bloom: 0.0200, bloomMax: 0.030, bloomDecay: 0.010,
@@ -362,6 +462,9 @@ const MELEE_COMBO = {
           { dmg: 1.10, cd: 1.10, arcK: 0.85 }],
   chainsaw: [{ dmg: 1.00, cd: 1.00 },
              { dmg: 1.30, cd: 1.10 }],
+  // 盾击只有两段：一记正面推撞，接一记压上去的重撞。大盾没有第三段可言。
+  shieldbash: [{ dmg: 1.00, cd: 1.00 },
+               { dmg: 1.25, cd: 1.35, rngK: 1.10 }],
 };
 
 // ---------------------------------------------------------------
@@ -388,11 +491,77 @@ const MELEE_HEAVY = {
   katana:   { dmg: 66,  windup: 0.70, cd: 0.75, s: 'diagonal', rngK: 1.10, arcK: 0.85 },
   axe:      { dmg: 80,  windup: 0.90, cd: 0.95, s: 'cleave',   rngK: 1.05, arcK: 0.85 },
   chainsaw: { dmg: 62,  windup: 0.65, cd: 0.75, s: 'sawPush',  rngK: 1.05, arcK: 0.90 },
+  // 盾击重击 = 整块盾往前砸。沿用电锯的 sawPush 弧线（往前压），
+  // 它正好是「向前推出去」这个动作，不用给客户端新增一条弧线。
+  shieldbash: { dmg: 58, windup: 0.70, cd: 0.80, s: 'sawPush', rngK: 1.15, arcK: 0.80 },
 };
 function meleeStep(id, stage) {
   const c = MELEE_COMBO[id] || MELEE_COMBO.knife;
   return c[((stage % c.length) + c.length) % c.length];
 }
+
+// ---------------------------------------------------------------
+// 角色。客户端 game_v2.js 里有同一张表，两边必须逐字一致。
+//
+//   maxHp      初始/上限血量
+//   pistolOnly 只能用手枪：handleJoin 锁定配装、handleSwitch 拒绝 primary 槽
+//   shield     是否带大盾（右键举盾，见 SHIELD_PLATE 与 handleState 的 msg.shield）
+//   melee      强制的近战武器 id；null = 由玩家在选枪页面选
+//   moveSpeed  角色自带的移速系数，**再乘**手上武器的 moveSpeed
+//   reserveK   备弹倍率。盾山只有手枪（48 发备弹），200 血却打不了几个人，
+//              所以给双倍；这个乘数只作用于自己，不动 WEAPONS.pistol 本身。
+//   headArmor  免疫「爆头必杀」（WEAPONS 里的 headKill，目前只有 AK47）。
+//              倍率本身不变，头还是 2.35 倍，只是不会被一枪带走。
+//              理由是盾山的全部强度就是 200 血这一条：如果一把全自动步枪
+//              爆头就能秒掉它，200 血和 100 血在这把枪面前完全等价，
+//              而它偏偏是那个「必须站在前面挨枪」的角色。豁免之后 AK 爆头
+//              打盾山是 66 一枪、四枪致死，仍然是它最怕的枪。
+//
+// 为什么 pistolOnly 要在服务端也拦一遍：客户端只是 UI，join 包是可以伪造的。
+// 一个声称 hero:'dunshan' 却带 primary:'awp' 的包，如果服务端照收，
+// 就是 200 血 + 免疫正面 + 狙击枪。
+const HEROES = {
+  assault: {
+    id: 'assault', name: '突击兵',
+    maxHp: 100, pistolOnly: false, shield: false, melee: null,
+    moveSpeed: 1.00, reserveK: 1, headArmor: false,
+  },
+  dunshan: {
+    id: 'dunshan', name: '盾山',
+    maxHp: 200, pistolOnly: true, shield: true, melee: 'shieldbash',
+    moveSpeed: 0.88, reserveK: 2, headArmor: true,
+  },
+};
+const DEFAULT_HERO = 'assault';
+function heroOf(p) { return HEROES[p && p.hero] || HEROES[DEFAULT_HERO]; }
+
+// 一发子弹实际扣多少血。普通情况就是「基础伤害 × 部位倍率」四舍五入，
+// 带 headKill 的枪（AK47）打中头部则改为「把目标打空」。
+//
+// 为什么返回剩余血量、而不是 9999 之类的大数：这个值会原样广播出去给客户端
+// 飘伤害数字（damage → kill/hit 事件），扣 9999 就会在屏幕上飘出一个 9999。
+// 取 target.hp 之后飘出来的正好是「打空它所需的血」——既必定致死，又不说谎。
+// 和 normal 取大是为了残血目标：hp 只剩 10 时这一枪的真实伤害仍是 66。
+//
+// target 可以是玩家，也可以是练枪靶子。靶子没有 hero 字段，heroOf 会回落到
+// 突击兵（headArmor: false），所以爆头必杀对靶子照样生效 —— 这是故意的：
+// 靶子（150 血）本来就是用来验证手感的，如果爆头在靶场上不生效，
+// 玩家没有任何办法练这把枪唯一需要练的东西。
+function rangedHit(wpn, mult, zone, target) {
+  const normal = Math.max(1, Math.round(wpn.damage * mult));
+  if (!wpn.headKill || zone !== 'head' || heroOf(target).headArmor) return normal;
+  return Math.max(normal, Math.max(1, Math.ceil(target.hp)));
+}
+// 角色专属近战的 id 集合。这些武器不出现在选枪页面，也不允许其他角色选到——
+// 由 HEROES 表自动派生，加新角色时不用记得回来改这里。
+const HERO_MELEE_IDS = new Set(Object.keys(HEROES).map((k) => HEROES[k].melee).filter(Boolean));
+// 举盾期间额外的移速惩罚（乘在上面的 moveSpeed 之上）。
+// 数值对齐开镜的 0.55——举盾对盾山来说就是「开镜」，右键占用的是同一个位置。
+const SHIELD_MOVE_K = 0.62;
+// 正面爆炸减伤。判定用「受击者朝向 · 受击者→爆心方向」的点积，
+// >= SHIELD_BLAST_DOT（≈70° 半锥）算正面。盾牌挡不住破片绕射，所以是减半不是免疫。
+const SHIELD_BLAST_DOT = 0.34;
+const SHIELD_BLAST_K = 0.5;
 
 // 地图掩体（与客户端保持一致）
 const BOXES = [
@@ -541,7 +710,7 @@ function effectiveSpread(p, wpn) {
   // 那个式子在满速疾跑时也只有 6.6/8 = 0.82，moveSpread 永远吃不满，
   // 而机枪（疾跑 5.02）更是最多只到 0.63 —— 越重的枪移动惩罚反而越轻，
   // 正好反了。改成除以自身上限，「跑到最快」对每把枪都等于惩罚拉满。
-  const maxSpeed = SPRINT_SPEED * (wpn.moveSpeed || 1);
+  const maxSpeed = SPRINT_SPEED * (wpn.moveSpeed || 1) * (heroOf(p).moveSpeed || 1);
   const moveFrac = clamp(speed / maxSpeed, 0, 1);
   const air = (p.pos.y > 0.35 ? (wpn.airSpread || 0) : 0);
   return base + hip + moveFrac * (wpn.moveSpread || 0) + air;
@@ -645,7 +814,7 @@ function rayCylinderY(o, d, cx, cz, r, y0, y1) {
   return best;
 }
 
-// 对一个目标做分部位求交。返回 { t, zone, mult } 或 null。
+// 对一个目标做分部位求交。返回 { t, zone, mult, block } 或 null。
 // 取**最近**命中而不是按部位优先级：手臂挡在胸口前面时就该判成手臂，
 // 这也是上面刻意让手臂柱比躯干柱更靠外的原因。
 //
@@ -653,9 +822,16 @@ function rayCylinderY(o, d, cx, cz, r, y0, y1) {
 // 靶子是外部模型的张开姿态（DUMMY_ZONES，见那里的说明）。
 // 靠 q.isDummy 分流，而不是给靶子写第二个函数——重击那个 bug 的教训就是
 // 「复制一份几何判定出去，两份必然各自演化」，所以这里只允许有一份求交逻辑。
+//
+// 盾山举盾时，在玩家表前面拼上 SHIELD_PLATE（盾面四块 + 面窗）。同样是拼表
+// 而不是分叉函数：盾面就是几块新盒子，命中规则（取最近）一个字都不用改。
+// block:true 的区域命中后 mult 为 0——调用方要负责「弹道停在这里但不结算伤害」。
 function raycastPlayerZones(o, d, q, maxT) {
   const dummy = !!q.isDummy;
-  const zones = dummy ? DUMMY_ZONES : HIT_ZONES;
+  // 举盾中的盾山：盾面在前，身体照旧。数组是每发子弹拼一次，长度只有 11，
+  // 比起给盾山单开一张完整表（就得把 HIT_ZONES 抄一遍）更不容易走样。
+  const shielded = !dummy && !!q.shield && heroOf(q).shield;
+  const zones = dummy ? DUMMY_ZONES : (shielded ? SHIELD_PLATE.concat(HIT_ZONES) : HIT_ZONES);
   // 蹲下：整个命中模型（含广相球）向下平移。站姿部位以 pos.y 为基准，
   // 蹲下时视野压到 0.8、躯干跟着下沉，打头更难、打胸口可能变成打脸。
   // 用单一的 drop 常量做平移，而不是重排部位表，保证「蹲下=整体矮一截」。
@@ -664,7 +840,9 @@ function raycastPlayerZones(o, d, q, maxT) {
   // 广相。raySphere 在「起点已在球内」时返回的是远交点（>0），也算命中，
   // 所以这里不用额外补贴身判定；返回 null 才是真的没交集。
   const by = dummy ? DUMMY_BROAD_Y : HIT_BROAD_Y;
-  const br = dummy ? DUMMY_BROAD_R : HIT_BROAD_R;
+  // 盾面伸到身体中轴前方 0.475、上沿 2.00、外缘 ±0.62，全在 HIT_BROAD_R=1.06 之外，
+  // 不换成 SHIELD_BROAD_R 的话广相会先把子弹判成「没打中」，盾牌等于不存在。
+  const br = dummy ? DUMMY_BROAD_R : (shielded ? SHIELD_BROAD_R : HIT_BROAD_R);
   const bt = raySphere(o, d, q.pos.x, q.pos.y + by - drop, q.pos.z, br);
   if (bt === null || bt >= maxT) return null;
 
@@ -683,13 +861,28 @@ function raycastPlayerZones(o, d, q, maxT) {
       const cx = q.pos.x + sx * (z.ox || 0) + bx * (z.oz || 0);
       const cz = q.pos.z + sz * (z.ox || 0) + bz * (z.oz || 0);
       t = raySphere(o, d, cx, q.pos.y + z.y - drop, cz, z.r);
+    } else if (z.kind === 'box') {
+      // 盾面是**平板**，不能用圆柱近似（会绕到体侧去，侧面来的弹也被挡）。
+      // (sx,sz) 和 (bx,bz) 是一组正交单位基，所以把射线整体换算到
+      // 「受击者本地系」(u=体侧, v=世界竖直, w=正前方) 之后就是一个轴对齐盒，
+      // 直接复用上面的 rayAABB——正交变换保长度，返回的 t 不需要换算回去。
+      const rx = o.x - q.pos.x, rz = o.z - q.pos.z;
+      const lo = {
+        x: rx * sx + rz * sz,
+        y: o.y - (q.pos.y - drop),
+        z: rx * bx + rz * bz,
+      };
+      const ld = { x: d.x * sx + d.z * sz, y: d.y, z: d.x * bx + d.z * bz };
+      t = rayAABB(lo, ld,
+        { x: (z.ox || 0) - z.hw, y: z.y0, z: (z.oz || 0) - z.hd },
+        { x: (z.ox || 0) + z.hw, y: z.y1, z: (z.oz || 0) + z.hd });
     } else {
       const cx = q.pos.x + sx * (z.ox || 0) + bx * (z.oz || 0);
       const cz = q.pos.z + sz * (z.ox || 0) + bz * (z.oz || 0);
       t = rayCylinderY(o, d, cx, cz, z.r, q.pos.y + z.y0 - drop, q.pos.y + z.y1 - drop);
     }
     if (t === null || t >= maxT) continue;
-    if (best === null || t < best.t) best = { t, zone: z.zone, mult: z.mult };
+    if (best === null || t < best.t) best = { t, zone: z.zone, mult: z.mult, block: !!z.block };
   }
   return best;
 }
@@ -894,6 +1087,7 @@ class Game {
       name: '',          // 昵称必须客户端 join 时自己带上来，服务端不发默认名
       joined: false,
       alive: false,
+      hero: DEFAULT_HERO,
       pos: { x: 0, y: 0, z: 0 },
       vel: { x: 0, y: 0, z: 0 },
       yaw: 0,
@@ -932,6 +1126,7 @@ class Game {
       triggerDown: false,
       bloom: 0,
       ads: false,
+      shield: false,     // 盾山的盾举起（true）还是收起（false）；非盾山角色恒为 false
       crouch: false,         // 蹲下：部位判定整体下移（见 raycastPlayerZones）
       reloading: false,
       reloadEnd: 0,
@@ -1015,11 +1210,33 @@ class Game {
       return;
     }
     p.name = name;
-    p.melee = (WEAPONS[msg.melee] && WEAPONS[msg.melee].type === 'melee') ? msg.melee : 'knife';
-    p.primary = (WEAPONS[msg.primary] && WEAPONS[msg.primary].type === 'ranged' && msg.primary !== 'pistol') ? msg.primary : 'rifle';
+    // 角色先定，配装再按角色收敛——顺序不能反，下面的合法性判断全依赖 hero。
+    p.hero = HEROES[msg.hero] ? msg.hero : DEFAULT_HERO;
+    const hero = HEROES[p.hero];
+    p.maxHp = hero.maxHp;
+    p.shield = false;
+    if (hero.melee) {
+      // 盾山：近战强制盾击，客户端选什么都不看。
+      p.melee = hero.melee;
+    } else {
+      // 突击兵：正常选刀，但**不允许**选到某个角色专属的近战（盾击）。
+      // 少了这一条，突击兵带着盾击就能拿到 58 伤害的重击而没有大盾的机动代价。
+      p.melee = (WEAPONS[msg.melee] && WEAPONS[msg.melee].type === 'melee'
+                 && !HERO_MELEE_IDS.has(msg.melee)) ? msg.melee : 'knife';
+    }
+    if (hero.pistolOnly) {
+      // 盾山只有手枪。主武器槽也指向手枪，但它是拿不出来的——
+      // handleSwitch 会拒绝 primary 槽，开局 current 就落在 secondary 上。
+      // 两个槽都写成 pistol 而不是留着 rifle，是为了让任何漏掉的分支
+      // 退化成「又是手枪」，而不是「凭空多一把步枪」。
+      p.primary = 'pistol';
+      p.current = 'secondary';
+    } else {
+      p.primary = (WEAPONS[msg.primary] && WEAPONS[msg.primary].type === 'ranged' && msg.primary !== 'pistol') ? msg.primary : 'rifle';
+      p.current = 'primary';
+    }
       p.secondary = 'pistol';
-    p.current = 'primary';
-      p.ranged = p.primary;
+      p.ranged = p.current === 'secondary' ? p.secondary : p.primary;
     p.joined = true;
     p.kills = 0;
     p.deaths = 0;
@@ -1038,7 +1255,9 @@ class Game {
         id: p.id,
         pos: p.pos,
         yaw: p.yaw,
+        hero: p.hero,
         hp: p.hp,
+        maxHp: p.maxHp,
         ammo: p.ammo,
         melee: p.melee,
           primary: p.primary,
@@ -1075,17 +1294,25 @@ class Game {
     p.pitch = 0;
     p.hp = p.maxHp;
     p.alive = true;
-      p.current = 'primary';
-      p.ranged = p.primary;
+      // 盾山没有可用的主武器槽（handleSwitch 拒绝 primary），所以复活后
+      // 必须落在 secondary 上。写死 'primary' 的话盾山重生后会拿着一把
+      // 「主武器槽里的手枪」，弹匣走的是 ammoPrimary 那一份，
+      // 和 2 键切出来的手枪各有一个满匣 —— 切一下枪就等于免费换弹。
+      p.current = heroOf(p).pistolOnly ? 'secondary' : 'primary';
+      p.ranged = p.current === 'secondary' ? p.secondary : p.primary;
+      p.shield = false;        // 重生时盾是收起的，不继承死前的举盾状态
       p.ammoPrimary = WEAPONS[p.primary].mag;
       p.ammoSecondary = WEAPONS.pistol.mag;
     p.ammo = WEAPONS[p.ranged].mag;
       // 复活重置补给：弹匣、备弹、手雷、烟雾弹全部回到出场状态。
       // 这是「弹药有限」能成立的前提——耗尽后靠死一次找补给会很怪，
       // 所以补给周期就等于一条命。
-      p.reservePrimary = WEAPONS[p.primary].reserve;
-      p.reserveSecondary = WEAPONS.pistol.reserve;
-    p.reserve = WEAPONS[p.ranged].reserve;
+      // reserveK：盾山只有一把手枪（48 发备弹），200 血却撑不了几次交火，
+      // 所以按角色给一个备弹倍率，而不是去动 WEAPONS.pistol 让所有人变强。
+      const rk = heroOf(p).reserveK || 1;
+      p.reservePrimary = WEAPONS[p.primary].reserve * rk;
+      p.reserveSecondary = WEAPONS.pistol.reserve * rk;
+    p.reserve = p.current === 'secondary' ? p.reserveSecondary : p.reservePrimary;
       p.grenadeCount = GRENADE_MAX;
       p.smokeCount = SMOKE_MAX;
     p.reloading = false;
@@ -1112,6 +1339,10 @@ class Game {
     if (typeof msg.yaw === 'number') p.yaw = msg.yaw;
     if (typeof msg.pitch === 'number') p.pitch = clamp(msg.pitch, -1.55, 1.55);
     if (typeof msg.ads === 'boolean') p.ads = msg.ads;
+    // 举盾：只有带盾的角色能置位，否则伪造一个 shield:true 就能让任何人免疫正面。
+    // 和 crouch 一样只走 30Hz 的 state 包——举盾的那一帧延迟是可以接受的，
+    // 它是个持续状态而不是像开火那样的瞬时事件。
+    if (typeof msg.shield === 'boolean') p.shield = msg.shield && heroOf(p).shield;
     if (typeof msg.crouch === 'boolean') p.crouch = msg.crouch;
   }
 
@@ -1153,6 +1384,10 @@ class Game {
 
   handleSwitch(p, msg) {
     if (!p.joined) return;
+    // 只有手枪的角色（盾山）没有主武器槽：整条分支直接不受理，
+    // 连 triggerDown/bloom 这些副作用都不执行——按 1 键就是什么也没发生。
+    // 客户端 switchWeapon 里有同一条检查，两边都要有：那边是手感，这边是权威。
+    if (msg.slot === 'primary' && heroOf(p).pistolOnly) return;
     if (msg.slot === 'melee') { p.current = 'melee'; }
     else if (msg.slot === 'secondary') { p.current = 'secondary'; p.ranged = 'pistol'; p.ammo = p.ammoSecondary; p.reserve = p.reserveSecondary; }
       else if (msg.slot === 'primary') { p.current = 'primary'; p.ranged = p.primary; p.ammo = p.ammoPrimary; p.reserve = p.reservePrimary; }
@@ -1307,6 +1542,18 @@ class Game {
             const t = rayAABB(ex.pos, d, min, max);
             if (t !== null && t < seg - 0.3) { dmg *= 0.45; break; }
           }
+          // 举盾的盾山：爆心落在身前锥内时减半。这里**不能**走 raycastPlayerZones——
+          // 爆炸不是一条射线打在某个部位上，破片是一片；用点积判「盾朝着爆心吗」
+          // 才对得上「大盾能挡下正面来的破片」这个直觉，而侧后方的雷照常全额。
+          // 和掩体遮挡一样是减半而不是免疫，两者可以叠（正面 + 有掩体 = 0.225）。
+          if (!q.isDummy && q.shield && heroOf(q).shield) {
+            const fwd = forwardFromYawPitch(q.yaw || 0, 0);
+            const fh = Math.hypot(fwd.x, fwd.z) || 1;
+            // d 是「爆心 → 目标」，取负得到「目标 → 爆心」，再投到水平面。
+            const th = Math.hypot(d.x, d.z) || 1;
+            const dot = (-d.x / th) * (fwd.x / fh) + (-d.z / th) * (fwd.z / fh);
+            if (dot >= SHIELD_BLAST_DOT) dmg *= SHIELD_BLAST_K;
+          }
           dmg = Math.round(dmg);
           if (dmg <= 0) continue;
           if (q.isDummy) this.damageDummy(q, dmg, null);
@@ -1333,11 +1580,15 @@ class Game {
       players.push({
         id: p.id,
         name: p.name,
+        hero: p.hero,
         pos: p.pos,
         vel: p.vel,
         yaw: p.yaw,
         pitch: p.pitch,
         hp: Math.round(p.hp),
+        // maxHp 必须上线：远端血条原来是写死除以 100 的，盾山（200 血）
+        // 满血时会算出 2.0，血条条直接溢出到框外。
+        maxHp: p.maxHp,
         alive: p.alive,
         current: p.current,
         melee: p.melee,
@@ -1358,6 +1609,10 @@ class Game {
         smokeCount: p.smokeCount,
         reloading: p.reloading,
         crouch: p.crouch,
+        // shield 必须上线：客户端要用它决定第三人称的盾是「举在身前」还是「收在背上」。
+        // 这两个姿态跟服务端 SHIELD_PLATE 的挡弹判定是同一个开关（都看 p.shield），
+        // 不同步的话就会出现「看到盾收着却打不进去」或者反过来。
+        shield: !!p.shield,
       });
     }
     this.broadcast({ t: 'snapshot', players });
@@ -1407,6 +1662,7 @@ class Game {
       let hitDummy = null;
       let hitZone = null;
       let hitMult = 1;
+      let hitBlocked = false;
 
       // 掩体
       for (const box of BOXES) {
@@ -1418,6 +1674,7 @@ class Game {
           hitPlayer = null;
           hitDummy = null;
           hitZone = null;
+          hitBlocked = false;
         }
       }
 
@@ -1431,6 +1688,9 @@ class Game {
           hitDummy = null;
           hitZone = h.zone;
           hitMult = h.mult;
+          // 打在盾面上：弹道到此为止（bestT 收紧，弹着点落在盾上，
+          // 后面的人被这块盾挡住），但**不结算伤害**。
+          hitBlocked = !!h.block;
         }
       }
 
@@ -1446,6 +1706,7 @@ class Game {
           hitDummy = dm.id;
           hitZone = h.zone;
           hitMult = h.mult;
+          hitBlocked = false;
         }
       }
 
@@ -1457,22 +1718,29 @@ class Game {
         },
         hitPlayer,
         hitDummy,
+        // 被盾挡下时 hitZone 就是 'shield'，客户端据此播金属跳弹火花而不是血花。
         hitZone,
       });
 
-      if (hitPlayer !== null) {
+      // hitBlocked 时**整段跳过**：不进 hitPlayers（攻击方不该看到命中指示器
+      // 和伤害数字，那会让人以为打进去了），也绝不能调 this.damage ——
+      // damage 里还带着连杀、助攻、击杀播报这一串副作用。
+      if (hitPlayer !== null && !hitBlocked) {
         const victim = this.players.get(hitPlayer);
         if (victim) {
           if (!hitPlayers.includes(hitPlayer)) hitPlayers.push(hitPlayer);
-          // 倍率四舍五入到整数伤害：霰弹枪 8 颗弹丸各算一次，
+          // 倍率四舍五入到整数伤害（在 rangedHit 里）：霰弹枪 8 颗弹丸各算一次，
           // 留小数会让同一次开火的总伤害随命中分布出现看不懂的零点几差。
-          this.damage(victim, p, wpn, Math.max(1, Math.round(wpn.damage * hitMult)), hitZone);
+          // rangedHit 同时负责 AK47 的爆头必杀 —— 放在这里而不是 damage() 里面，
+          // 是因为爆头必杀只属于**子弹**：手雷没有命中部位，近战的部位判定走
+          // meleeTargets，两者都不该被一把步枪的特性影响。
+          this.damage(victim, p, wpn, rangedHit(wpn, hitMult, hitZone, victim), hitZone);
         }
       } else if (hitDummy !== null) {
         const dm = this.dummies.find((x) => x.id === hitDummy);
         if (dm) {
           if (!hitDummies.includes(hitDummy)) hitDummies.push(hitDummy);
-          this.damageDummy(dm, Math.max(1, Math.round(wpn.damage * hitMult)), hitZone);
+          this.damageDummy(dm, rangedHit(wpn, hitMult, hitZone, dm), hitZone);
         }
       }
     }
@@ -1500,6 +1768,8 @@ class Game {
   //
   // 返回 [{ target, zone, mult }]：命中与否完全由这里决定，调用方只负责
   // 把 mult 乘进自己的基础伤害、并按 isDummy 分流到 damage/damageDummy。
+  // 砍在盾山盾面上的目标**不会出现在返回值里**，所以两个调用方都不需要
+  // 单独处理阻挡——盾牌对近战和对子弹是同一份几何。
   meleeTargets(p, yaw, pitch, range, arcDot) {
     const dir = normalize(forwardFromYawPitch(yaw, pitch));
     // 近战扇区是**水平**的，所以要用 dir 的水平投影再归一化。
@@ -1546,6 +1816,11 @@ class Game {
       // 射线没打中任何部位时兜底记 torso：几何上已经判定在范围+扇区内了，
       // 不能因为部位求交的边界误差把这一刀吞掉。
       const zh = raycastPlayerZones(origin, rayDir, q, dist + PLAYER_RADIUS);
+      // 砍在盾面上：整个目标从候选里剔掉，而不是当成 0 伤害命中。
+      // 剔掉才不会进 hitPlayers/hitZones，攻击方那边不会出现「砍中了但没掉血」。
+      // 注意这里必须靠 zh.block 判断，**不能**依赖上面的 torso 兜底 ——
+      // 兜底分支（zh === null）只在射线连盾都没碰到时走，那种情况本来就该照常结算。
+      if (zh && zh.block) continue;
       hits.push({ target: q, zone: zh ? zh.zone : 'torso', mult: zh ? zh.mult : 1.0 });
     }
     return hits;

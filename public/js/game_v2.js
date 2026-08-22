@@ -30,6 +30,9 @@
     katana: { id: 'katana', name: '武士刀', type: 'melee', damage: 45, range: 3.2, cooldown: 480, arcDot: 0.5, moveSpeed: 1.06, color: 0x8a8a8a },
       kukri: { id: 'kukri', name: '尼泊尔军刀', type: 'melee', damage: 40, range: 2.6, cooldown: 420, arcDot: 0.5, moveSpeed: 1.12, color: 0x9aa0a0 },
       chainsaw: { id: 'chainsaw', name: '电锯', type: 'melee', damage: 30, range: 2.7, cooldown: 300, arcDot: 0.6, moveSpeed: 0.90, color: 0xff6600 },
+    // 盾击：盾山专属，不出现在选枪页（HERO_MELEE_IDS 会把它从玩家可选项里剔掉）。
+    // 一面 20kg 的防弹盾砸过去，伤害比匕首高、但挥得慢、扇区窄（arcDot 0.62）。
+    shieldbash: { id: 'shieldbash', name: '盾击', type: 'melee', damage: 38, range: 2.2, cooldown: 640, arcDot: 0.62, moveSpeed: 0.88, color: 0x6b7280 },
     // 散射/后坐力字段（必须与 server.js 的 WEAPONS 表逐字一致，否则准星画的
     // 散射圈和服务端真正判定的散射不是一回事）：
     //   spread 首发锥形散射半角(rad) / bloom 每发累加 / bloomMax 上限 / bloomDecay 每秒回落
@@ -49,8 +52,17 @@
     pistol: { id: 'pistol', name: '手枪', type: 'ranged', damage: 26, mag: 12, reserve: 48, cooldown: 240, range: 90, pellets: 1, spread: 0.006, reloadTime: 1.3, auto: false, bloom: 0.0170, bloomMax: 0.030, bloomDecay: 0.050, moveSpread: 0.012, airSpread: 0.020, adsSpread: 0.55, hipSpread: 0.020, recoil: 0.0130, recoilH: 0.0045, recoilRamp: 0.85, moveSpeed: 1.06, color: 0x444444 },
     shotgun: { id: 'shotgun', name: '霰弹枪', type: 'ranged', damage: 18, mag: 8, reserve: 32, cooldown: 700, range: 55, pellets: 10, spread: 0.060, reloadTime: 2.1, auto: false, bloom: 0.0380, bloomMax: 0.070, bloomDecay: 0.032, moveSpread: 0.018, airSpread: 0.028, adsSpread: 0.65, hipSpread: 0.014, recoil: 0.0400, recoilH: 0.0100, recoilRamp: 0.50, moveSpeed: 0.94, color: 0x553311 },
     rifle: { id: 'rifle', name: '突击步枪', type: 'ranged', damage: 19, mag: 30, reserve: 120, cooldown: 105, range: 110, pellets: 1, spread: 0.005, reloadTime: 1.9, auto: true, bloom: 0.0093, bloomMax: 0.042, bloomDecay: 0.055, moveSpread: 0.016, airSpread: 0.028, adsSpread: 0.45, hipSpread: 0.034, recoil: 0.0090, recoilH: 0.0038, recoilRamp: 1.30, moveSpeed: 1.00, color: 0x222222 },
+    // AK47：唯一带 headKill 的枪。爆头**直接致死**（盾山的 headArmor 豁免），
+    // 其余部位按普通部位倍率。伤害结算全在服务端（rangedHit），这里带上
+    // headKill 只是为了两张表逐字一致 + 选枪页面能读到这条特性。
+    // 代价全部落在「能不能打到头」上：spread 0.0075、hipSpread 0.048（全枪最高）、
+    // recoil 0.0165 配 ramp 1.55（满 bloom 每发抬 2.4°，第三发起枪口就上天）。
+    // N 取 10：bloom = 0.058×0.135 + 0.060/10 = 0.0138 > 0.00783 ✓
+    ak47: { id: 'ak47', name: 'AK47', type: 'ranged', damage: 28, mag: 30, reserve: 90, cooldown: 135, range: 105, pellets: 1, spread: 0.0075, reloadTime: 2.5, auto: true, headKill: true, bloom: 0.0138, bloomMax: 0.060, bloomDecay: 0.058, moveSpread: 0.020, airSpread: 0.034, adsSpread: 0.50, hipSpread: 0.048, recoil: 0.0165, recoilH: 0.0072, recoilRamp: 1.55, moveSpeed: 0.92, color: 0x6b4a2a },
     smg: { id: 'smg', name: '冲锋枪', type: 'ranged', damage: 15, mag: 30, reserve: 150, cooldown: 70, range: 65, pellets: 1, spread: 0.008, reloadTime: 1.5, auto: true, bloom: 0.0078, bloomMax: 0.050, bloomDecay: 0.060, moveSpread: 0.013, airSpread: 0.024, adsSpread: 0.50, hipSpread: 0.018, recoil: 0.0072, recoilH: 0.0044, recoilRamp: 1.45, moveSpeed: 1.10, color: 0x2d2f33 },
-    awp: { id: 'awp', name: '狙击步枪', type: 'ranged', damage: 120, mag: 5, reserve: 20, cooldown: 1400, range: 160, pellets: 1, spread: 0.0004, reloadTime: 2.6, auto: false, bloom: 0.0200, bloomMax: 0.030, bloomDecay: 0.010, moveSpread: 0.030, airSpread: 0.045, adsSpread: 0.15, hipSpread: 0.070, recoil: 0.0460, recoilH: 0.0060, recoilRamp: 0.45, moveSpeed: 0.86, color: 0x1a3a1a },
+    // 狙：damage 150 意味着任何部位（四肢 117 / 腿 120）都过 100，打中即杀，
+    // 部位倍率对它不生效；只有 200 血的盾山才需要两枪。详见 server.js 里同一条。
+    awp: { id: 'awp', name: '狙击步枪', type: 'ranged', damage: 150, mag: 5, reserve: 20, cooldown: 1400, range: 160, pellets: 1, spread: 0.0004, reloadTime: 2.6, auto: false, bloom: 0.0200, bloomMax: 0.030, bloomDecay: 0.010, moveSpread: 0.030, airSpread: 0.045, adsSpread: 0.15, hipSpread: 0.070, recoil: 0.0460, recoilH: 0.0060, recoilRamp: 0.45, moveSpeed: 0.86, color: 0x1a3a1a },
       dmr: { id: 'dmr', name: '连狙', type: 'ranged', damage: 55, mag: 10, reserve: 40, cooldown: 300, range: 120, pellets: 1, spread: 0.002, reloadTime: 2.1, auto: false, bloom: 0.0150, bloomMax: 0.022, bloomDecay: 0.035, moveSpread: 0.020, airSpread: 0.032, adsSpread: 0.30, hipSpread: 0.046, recoil: 0.0230, recoilH: 0.0050, recoilRamp: 1.00, moveSpeed: 0.93, color: 0x2a4a2a },
       lmg: { id: 'lmg', name: '重机枪', type: 'ranged', damage: 16, mag: 125, reserve: 125, cooldown: 95, range: 100, pellets: 1, spread: 0.009, reloadTime: 3.8, auto: true, bloom: 0.0070, bloomMax: 0.055, bloomDecay: 0.050, moveSpread: 0.024, airSpread: 0.036, adsSpread: 0.60, hipSpread: 0.042, recoil: 0.0062, recoilH: 0.0042, recoilRamp: 1.70, moveSpeed: 0.76, color: 0x3a3a3a }
   };
@@ -58,6 +70,36 @@
   // 投掷物携带上限（与 server.js 一致）
   var GRENADE_MAX = 2;
   var SMOKE_MAX = 2;
+
+  // ----------------------------------------------------------
+  // 干员（与 server.js 的 HEROES 表逐字一致）
+  // ----------------------------------------------------------
+  //   maxHp      初始/最大生命
+  //   pistolOnly 只有手枪：主武器槽被锁死，Digit1 / 滚轮都不能切过去
+  //   shield     有大盾：右键改为举盾（而不是开镜），正面除面窗外免疫
+  //   melee      固定近战 id；null = 玩家自选
+  //   moveSpeed  角色移速系数，与武器的 moveSpeed 相乘
+  //   reserveK   备弹倍数（只有手枪的角色弹药消耗快，靠这个补）
+  //   headArmor  免疫爆头必杀（AK47 的 headKill）。头部倍率不变，只是不会
+  //              被一枪带走 —— 盾山的强度就是 200 血这一条，被一把全自动
+  //              步枪爆头秒掉的话它和 100 血的突击兵没有区别。
+  var HEROES = {
+    assault: {
+      id: 'assault', name: '突击兵',
+      maxHp: 100, pistolOnly: false, shield: false, melee: null,
+      moveSpeed: 1.00, reserveK: 1, headArmor: false
+    },
+    dunshan: {
+      id: 'dunshan', name: '盾山',
+      maxHp: 200, pistolOnly: true, shield: true, melee: 'shieldbash',
+      moveSpeed: 0.88, reserveK: 2, headArmor: true
+    }
+  };
+  var DEFAULT_HERO = 'assault';
+  function heroOf(id) { return HEROES[id] || HEROES[DEFAULT_HERO]; }
+  // 举盾时的额外移速惩罚。举着盾正面免疫，代价必须是「推进变慢」，
+  // 否则举盾没有任何机会成本，全程举着就是最优解。
+  var SHIELD_MOVE_K = 0.62;
 
   // 带光学镜的枪。开镜时要同时做三件事：套狙击镜遮罩、收起手里的枪、按倍率
   // 补偿鼠标灵敏度。原来这三处各自硬编码成 `=== 'awp'`，于是连狙明明建模时
@@ -161,7 +203,10 @@
     kukri:    { r: [0, 0, 0.082],      l: null },
     axe:      { r: [0, -0.01, 0.215],  l: [0, -0.01, 0.045] },
     katana:   { r: [0, 0, 0.075],      l: [0, 0, 0.195] },
-    chainsaw: { r: [0, -0.038, 0.195], l: [0, 0.135, -0.02] }
+    chainsaw: { r: [0, -0.038, 0.195], l: [0, 0.135, -0.02] },
+    // 盾击：盾牌模型的原点就落在背面把手上（见 buildShieldbash），
+    // 所以右手点是 [0,0,0]；左手不参与（真防爆盾是单臂套着的）。
+    shieldbash: { r: [0, 0, 0], l: null }
   };
   // 近战挂点不能用 WEAPON_MOUNT——那是「枪托顶肩」的位置，刀顶在肩上没道理。
   // 刀端在胸前偏右、比枪低一档、离身体远一点，右手才有地方握。
@@ -299,7 +344,11 @@
     // 电锯：推锯 → 反向推锯。动作幅度小是**刻意**的，
     // 电锯的输出靠的是 0.30s 一下的高频率，不是单下的幅度。
     chainsaw: [{ s: 'saw',  dmg: 1.00, cd: 1.00 },
-               { s: 'sawB', dmg: 1.30, cd: 1.10 }]
+               { s: 'sawB', dmg: 1.30, cd: 1.10 }],
+    // 盾击：正推（saw）→ 重推（sawPush）。用电锯的两个已有弧线，
+    // 省得为「推盾」单独造一条弧线——推锯和推盾在动作上没有质的区别。
+    shieldbash: [{ s: 'saw',     dmg: 1.00, cd: 1.00 },
+                 { s: 'sawPush', dmg: 1.25, cd: 1.35, rngK: 1.10 }]
   };
   // 近战重击（右键，带前摇）。与轻击完全独立：
   //   dmg     重击绝对伤害（不乘轻击基础值）——重击两下必须 >100，所以 dmg 都 ≥ 50
@@ -320,7 +369,10 @@
     // 幅度最大的那条弧线配全场最高的 80 伤害和最长的 0.90s 前摇。
     axe:      { dmg: 80,  windup: 0.90, cd: 0.95, s: 'cleave',   rngK: 1.05, arcK: 0.85 },
     // 电锯：重击是往前压进去锯（sawPush），不是挥。
-    chainsaw: { dmg: 62,  windup: 0.65, cd: 0.75, s: 'sawPush',  rngK: 1.05, arcK: 0.90 }
+    chainsaw: { dmg: 62,  windup: 0.65, cd: 0.75, s: 'sawPush',  rngK: 1.05, arcK: 0.90 },
+    // 盾击重击：整块盾往前撞（sawPush）。前摇 0.70 很长，扇区还收窄到 0.80——
+    // 盾山有 200 血又免疫正面，近战不能再给他一个又快又广的处决手段。
+    shieldbash: { dmg: 58, windup: 0.70, cd: 0.80, s: 'sawPush', rngK: 1.15, arcK: 0.80 }
   };
   function meleeStep(id, stage) {
     var c = MELEE_COMBO[id] || MELEE_COMBO.knife;
@@ -464,6 +516,10 @@ var leaderboardList = document.getElementById('leaderboardList');
     pitch: 0,
     hp: 100,
     maxHp: 100,
+    // 干员 id（HEROES 的键）。服务端 joined 包会回一个权威值，本地只是先猜一手。
+    hero: DEFAULT_HERO,
+    // 盾山的盾是否举起。非盾山角色恒为 false（服务端 handleState 也会强制）。
+    shield: false,
     alive: false,
     initialized: false,
     onGround: true,
@@ -498,6 +554,7 @@ var leaderboardList = document.getElementById('leaderboardList');
   var pointerLocked = false;
   var triggerDown = false;
   var ads = false;            // 右键开镜
+  var selectedHero = DEFAULT_HERO;
   var selectedMelee = 'knife';
   var selectedPrimary = 'rifle';
   var showScore = false;
@@ -552,6 +609,11 @@ var smokeParticles = [];
   var renderer, scene, camera, skyMesh;
   camera = new THREE.PerspectiveCamera(); // 临时相机，initThree 中会重新创建
   var vmGroup, vmGunGroup, vmMeleeGroup;
+  // 第一人称盾牌（盾山）。挂在 camera 上、与 vmGroup 平级——盾不跟着枪的
+  // 摇摆/后坐走，它是套在小臂上的一块板，相对视线基本不动。
+  var vmShieldGroup = null, vmShieldModel = null;
+  // 收盾 0 → 举盾 1 的插值量，逐帧向目标逼近（updateViewmodelShield）
+  var shieldPose = 0;
   var gunModels = {};
   var meleeModels = {};
   var muzzleAnchors = {};
@@ -2296,6 +2358,168 @@ var smokeParticles = [];
     return g;
   }
 
+  // -------------------- AK47 --------------------
+  // 和上面那把 M4 风格步枪同属「全自动步枪」，所以剪影必须一眼分得开 ——
+  // 拿错枪在这把枪上是有代价的（爆头必杀 vs 没有），看不出手里是哪把最难受。
+  // 选了六处 AK 的招牌特征，每一处都落在**侧面轮廓**上（第三人称只看得到侧影）：
+  //   1. 木制护木 + 上护木，中间露出一截气管（M4 是聚合物护木 + 顶部导轨）
+  //   2. 枪口端斜切的气块，气管以 26° 斜插进去（M4 的气块是正方的）
+  //   3. 大弧度香蕉弹匣：dA = -0.16/段 × 5 段，是 M4（-0.085 × 4 段）的两倍多
+  //   4. 固定木托，托跟明显下垂（M4 是伸缩托，缓冲管水平）
+  //   5. 斜切消焰器（AKM 的招牌斜口）
+  //   6. 右侧那条又长又扁的保险拨杆 + 觇孔式表尺（M4 是红点镜）
+  // 弹匣弧度的方向：addCurvedMag 的 dA 取**负值**弹匣底板才朝枪口方向弯
+  //（正值是往枪托方向弯，AR 弹匣那种），AK 的弹匣正是往前弯的。
+  //
+  // 尺度沿用全系的「真枪 1.45 倍」：全长 z -0.745..0.480 = 1.225m ↔ 真 AK 0.87m。
+  // 比 M4（1.31m）短一截，也符合实物（AK 870mm vs AR 900mm）。
+  function buildAK47(withHands) {
+    var M = weaponMats();
+    var g = new THREE.Group();
+    // ---- 机匣：冲压方机匣 + 顶部弧形防尘盖 ----
+    // AK 没有导轨，防尘盖上是两条压筋。压筋做成沿 z 的长条（不是 addRibs 那种
+    // 横向齿），侧面剪影上才是「一条连续的高光」而不是锯梳。
+    g.add(rBox(0.072, 0.076, 0.30, 0.012, M.gunmetal, 0, 0.022, 0.02));
+    g.add(rBox(0.066, 0.050, 0.22, 0.010, M.gunmetal, 0, -0.028, 0.03));
+    g.add(rBox(0.062, 0.020, 0.28, 0.010, M.darkSteel, 0, 0.058, 0.01));
+    g.add(mBox(0.010, 0.008, 0.26, M.gunmetal, -0.018, 0.068, 0.01));
+    g.add(mBox(0.010, 0.008, 0.26, M.gunmetal, 0.018, 0.068, 0.01));
+    // 机匣铆钉：冲压机匣的标志，两侧各三颗（AK 是铆的，AR 是螺的）
+    [-0.037, 0.037].forEach(function (rx) {
+      addScrew(g, M.trimSteel, rx, -0.020, -0.045, 0.0055);
+      addScrew(g, M.trimSteel, rx, -0.020, 0.075, 0.0055);
+      addScrew(g, M.trimSteel, rx, 0.030, 0.140, 0.0055);
+    });
+    // 抛壳口（右侧长条凹口）+ 防尘盖后端的复进簧导杆压钮
+    g.add(mBox(0.012, 0.026, 0.10, M.darkSteel, 0.033, 0.030, -0.03));
+    var recoilBtn = mCylZ(0.011, 0.011, 0.020, M.trimSteel, 12);
+    recoilBtn.position.set(0, 0.048, 0.178); g.add(recoilBtn);
+    // 拉机柄：AK 的拉机柄和枪机框一体，从**右侧**伸出来一小截（M4 是尾部 T 形柄）。
+    // 进 charge 组，换弹收尾要往后拉一下上膛。
+    var aCharge = part(g, 'charge');
+    aCharge.add(rBox(0.030, 0.022, 0.030, 0.006, M.trimSteel, 0.042, 0.038, -0.02));
+    aCharge.add(mBox(0.046, 0.014, 0.016, M.trimSteel, 0.052, 0.038, -0.02));
+    // ---- 表尺座 + 觇孔式表尺（缺口照门，坐在机匣前端）----
+    g.add(rBox(0.052, 0.032, 0.060, 0.008, M.darkSteel, 0, 0.058, -0.140));
+    var leaf = rBox(0.030, 0.014, 0.050, 0.004, M.darkSteel, 0, 0.080, -0.148);
+    leaf.rotation.x = -0.10; g.add(leaf);
+    g.add(mBox(0.008, 0.012, 0.008, M.gunmetal, 0, 0.090, -0.168));
+    // ---- 枪管 + 木护木（下护木包枪管、上护木盖气管，中间露一截气管）----
+    var barrel = mCylZ(0.0165, 0.0165, 0.30, M.darkSteel, 18);
+    barrel.position.set(0, 0.030, -0.30); g.add(barrel);
+    g.add(rBox(0.072, 0.070, 0.23, 0.026, M.wood, 0, 0.008, -0.305));
+    // 上护木收短到 -0.395：后面那个斜气块必须露出来，被木头盖住等于没做
+    g.add(rBox(0.052, 0.038, 0.145, 0.016, M.wood, 0, 0.062, -0.3225));
+    // 下护木两侧的散热槽（真枪是两道压铁散热片；这里用浅色木纹条代替，
+    // 侧面才有明暗层次，纯一块木头在顶光下是一片平的棕色）
+    [-0.036, 0.036].forEach(function (hx) {
+      g.add(mBox(0.006, 0.012, 0.16, M.woodDark, hx, 0.020, -0.305));
+    });
+    // 护木后端的箍（木头和机匣的交界，真枪是一圈钢箍）
+    g.add(rBox(0.076, 0.074, 0.022, 0.008, M.gunmetal, 0, 0.008, -0.185));
+    // 气管：从表尺座跑到气块后端（-0.43）就停，再往前是斜气块的活儿。
+    // 原来一路捅到 -0.48 会把斜气块整段包在直管里，斜的特征就看不见了。
+    var gasTube = mCylZ(0.013, 0.013, 0.270, M.gunmetal, 14);
+    gasTube.position.set(0, 0.060, -0.295); g.add(gasTube);
+    // ---- 斜气块：AK 最好认的一处，导气座从枪管往后上方斜着抬到气管 ----
+    // 座身只做成枪管上的一圈短箍（h 0.030），把高度全留给斜块 ——
+    // 之前箍子本身就有 7cm 高，斜块整个藏在它的竖直轮廓里，斜等于没斜。
+    g.add(rBox(0.042, 0.030, 0.056, 0.010, M.darkSteel, 0, 0.030, -0.460));
+    // 用一块方座而不是细圆柱：斜面要在剪影上占得住地方。
+    // rotation.x 取**正**值，顶面才往枪尾（+z）倒 —— 低头在枪管、抬头接气管；
+    // 反过来（顶面朝前）是错的，而且细管在这个尺寸下压根看不出斜。
+    // 0.62rad 下这块从 (y0.011, z-0.482) 抬到 (y0.077, z-0.424)，斜 36°，一眼能读出来。
+    var gasBoss = rBox(0.030, 0.070, 0.026, 0.007, M.darkSteel, 0, 0.044, -0.448);
+    gasBoss.rotation.x = 0.62; g.add(gasBoss);
+    g.add(ringZ(0.020, 0.0045, M.trimSteel, 0, 0.030, -0.487, 16));
+    // 气块到准星之间的裸枪管 + 通条（真枪的清膛通条就挂在枪管下方）
+    var barrel2 = mCylZ(0.0145, 0.0145, 0.20, M.darkSteel, 18);
+    barrel2.position.set(0, 0.030, -0.575); g.add(barrel2);
+    var rod = mCylZ(0.005, 0.005, 0.22, M.trimSteel, 8);
+    rod.position.set(0, 0.014, -0.530); g.add(rod);
+    // ---- 准星座（带护耳）+ 刺刀座 ----
+    g.add(rBox(0.040, 0.052, 0.046, 0.008, M.darkSteel, 0, 0.044, -0.620));
+    g.add(mBox(0.008, 0.030, 0.010, M.gunmetal, 0, 0.078, -0.620));
+    [-0.017, 0.017].forEach(function (ex) {
+      g.add(mBox(0.007, 0.032, 0.030, M.darkSteel, ex, 0.074, -0.620));
+    });
+    g.add(mBox(0.018, 0.016, 0.040, M.darkSteel, 0, 0.008, -0.610));
+    // ---- 斜切消焰器（AKM 斜口制退器）----
+    var brake = mCylZ(0.024, 0.022, 0.070, M.darkSteel, 18);
+    brake.position.set(0, 0.030, -0.695); g.add(brake);
+    // 斜口：一块倾斜的端面板，正是「斜切」这个特征本身。
+    // 这里要的是能看出斜的角度（0.5rad ≈ 29°），抠成 5° 在剪影上完全读不出来。
+    var slant = rBox(0.048, 0.050, 0.012, 0.006, M.gunmetal, 0, 0.030, -0.726);
+    slant.rotation.x = 0.50; g.add(slant);
+    g.add(ringZ(0.026, 0.005, M.gunmetal, 0, 0.030, -0.664, 18));
+    // ---- 弹匣井 + 大弧度香蕉弹匣 ----
+    g.add(rBox(0.060, 0.050, 0.090, 0.010, M.gunmetal, 0, -0.062, -0.055, 'y'));
+    var aMag = part(g, 'mag');
+    // dA = -0.16：五段共弯 40°，底板比进弹口往前探出约 8cm，这就是「香蕉」。
+    var aEnd = addCurvedMag(aMag, M.polymerTan, 0, -0.082, -0.055, 5, 0.052, 0.052, 0.082, -0.16);
+    // 弹匣侧面的横向加强筋：必须挂到各弯段**自己**身上，跟着那一段的倾角走。
+    // 按固定 y/z 排一排（直弹匣那种写法）时，前面那根会从弯出去的匣体正面穿出来，
+    // 变成弹匣旁边悬着的一根小黑条——包围盒相交检测抓不到这种斜向穿出。
+    // 颜色用 woodDark 而不是 polymer：polymer 是近黑的蓝灰，压在土黄匣体上
+    // 五道又粗又黑的条会被读成「五个透空的窗口」；深棕才像压出来的一道暗筋。
+    aMag.children.slice(0).forEach(function (seg) {
+      [-0.034, 0.034].forEach(function (rx) {
+        seg.add(mBox(0.005, 0.006, 0.064, M.woodDark, rx, 0, 0));
+      });
+    });
+    // 底板落在弯段真正的末端（addCurvedMag 的返回值就是那个点）并跟着累计倾角 0.8rad 一起歪；
+    // 写死坐标会让它掉在匣体后方两三厘米处，像块单独挂着的铁片。
+    var aFloor = rBox(0.058, 0.014, 0.078, 0.006, M.darkSteel, 0, aEnd[0] - 0.005, aEnd[1] - 0.005, 'y');
+    aFloor.rotation.x = 0.80; aMag.add(aFloor);
+    anchor(g, 'magWell', 0, -0.086, -0.055);
+    // 弹匣卡榫（弹匣井后方那片扳片，AK 靠它「摇」出弹匣）
+    g.add(rBox(0.016, 0.030, 0.026, 0.006, M.trimSteel, 0, -0.062, 0.003));
+    // ---- 握把（木/胶木，比 AR 更竖）----
+    var grip = rBox(0.056, 0.125, 0.070, 0.018, M.woodDark, 0, -0.088, 0.135, 'y');
+    grip.rotation.x = -0.30; g.add(grip);
+    addRibs(g, 4, M.wood, 0, -0.095, 0.108, 0.006, 0.058, 0.014, 0.020);
+    var gripCap = rBox(0.050, 0.024, 0.064, 0.010, M.darkSteel, 0, -0.152, 0.156);
+    gripCap.rotation.x = -0.30; g.add(gripCap);
+    // 扳机护圈 + 扳机
+    g.add(loopX(0.032, 0.010, M.gunmetal, 0, -0.052, 0.070, 22));
+    g.add(mBox(0.012, 0.034, 0.014, M.trimSteel, 0, -0.052, 0.058));
+    // ---- 保险/快慢机拨杆：右侧一条又长又扁的板，AK 的第二个招牌 ----
+    // 长度给到 9cm（真枪那条拨杆几乎横跨半个机匣），短了就只是个小凸起。
+    var sel = rBox(0.010, 0.030, 0.090, 0.004, M.trimSteel, 0.040, 0.036, 0.058);
+    sel.rotation.x = 0.10; g.add(sel);
+    g.add(rBox(0.012, 0.022, 0.022, 0.005, M.trimSteel, 0.040, 0.014, 0.012));
+    var selPin = mCylY(0.010, 0.010, 0.014, M.trimSteel, 12);
+    selPin.rotation.z = Math.PI / 2; selPin.position.set(0.040, 0.036, 0.100); g.add(selPin);
+    // 拨杆的两档刻字位（АВ/ОД），用两道浅色短条示意
+    g.add(mBox(0.004, 0.014, 0.010, M.polymerLt, 0.038, 0.058, 0.052));
+    g.add(mBox(0.004, 0.014, 0.010, M.polymerLt, 0.038, 0.058, 0.086));
+    // ---- 固定木托：托颈 + 过渡段 + 托体 + 直托背 + 下垂托跟 ----
+    // 木托的下垂是靠**正**的 rotation.x：局部 +z（朝枪尾）在正角下往下走，
+    // 负值会把托跟翘到肩膀上方去。
+    // 托颈直接接托体的话，两者高度差 4.6cm，交界处是一整面竖直的墙——
+    // 侧面看就是「两块木头对撞」。中间垫一段并让倾角 0.10→0.14→0.16 递增，
+    // 才收成一条连续下坡的托腹线。
+    var neck = rBox(0.058, 0.082, 0.170, 0.018, M.wood, 0, -0.014, 0.235);
+    neck.rotation.x = 0.10; g.add(neck);
+    var waist = rBox(0.060, 0.100, 0.075, 0.016, M.wood, 0, -0.030, 0.290);
+    waist.rotation.x = 0.14; g.add(waist);
+    var stock = rBox(0.062, 0.098, 0.225, 0.022, M.wood, 0, -0.040, 0.372);
+    stock.rotation.x = 0.16; g.add(stock);
+    var comb = rBox(0.052, 0.030, 0.200, 0.012, M.woodDark, 0, 0.014, 0.360);
+    comb.rotation.x = 0.10; g.add(comb);
+    var butt = rBox(0.070, 0.112, 0.020, 0.008, M.darkSteel, 0, -0.062, 0.470);
+    butt.rotation.x = 0.16; g.add(butt);
+    addRibs(g, 3, M.gunmetal, 0, -0.062, 0.478, 0.0, 0.060, 0.012, 0.008);
+    // 托体上的贯通孔（真枪 AK 木托侧面有一个减重/背带孔）+ 背带环
+    g.add(loopX(0.014, 0.005, M.trimSteel, -0.032, -0.052, 0.300, 14));
+    g.add(loopX(0.015, 0.005, M.trimSteel, -0.032, -0.014, -0.195, 14));
+    var muzzle = new THREE.Object3D(); muzzle.position.set(0, 0.030, -0.745); g.add(muzzle);
+    g.userData.muzzle = muzzle;
+    // 右手在握把（-0.30 与握把倾角一致），左手抱下护木
+    if (withHands) addHands(g, [0.0, -0.104, 0.150], [0.0, -0.058, -0.305], { rRotX: -0.30, lRotX: -0.08 });
+    return g;
+  }
+
   // -------------------- 冲锋枪 SMG（MP5 风格）--------------------
   // 和步枪最重要的区别是**长度**：全枪 0.94m，只有步枪（1.31m）的 0.72 倍。
   // 剪影上还刻意选了三处 MP5 的招牌特征，让它在第三人称一眼就能和步枪区分开：
@@ -2700,7 +2924,7 @@ var smokeParticles = [];
     return g;
   }
 
-  var GUN_BUILDERS = { pistol: buildPistol, shotgun: buildShotgun, rifle: buildRifle, smg: buildSMG, awp: buildAWP, dmr: buildDMR, lmg: buildLMG };
+  var GUN_BUILDERS = { pistol: buildPistol, shotgun: buildShotgun, rifle: buildRifle, ak47: buildAK47, smg: buildSMG, awp: buildAWP, dmr: buildDMR, lmg: buildLMG };
   function buildGunModel(id, withHands) {
     var fn = GUN_BUILDERS[id] || buildRifle;
     return fn(withHands);
@@ -2927,7 +3151,228 @@ var smokeParticles = [];
     return g;
   }
 
-  var MELEE_BUILDERS = { knife: buildKnife, axe: buildAxe, katana: buildKatana, kukri: buildKukri, chainsaw: buildChainsaw };
+  // ==========================================================
+  // 防爆盾（盾山专属）
+  //
+  // 盾面的**拆分方式必须和 server.js 的 SHIELD_PLATE 一致**：那边把盾面拆成
+  // 「窗下 / 窗上 / 窗左 / 窗右」四块互不相交的盒子，刻意留出面窗不覆盖。这里照抄
+  // 同一套拆分，于是「看到的盾面」和「挡弹的盾面」就是同一组盒子——不会出现看着
+  // 有盾却打得穿、或者看着是窗却打不进去。改任何一边都要同时改另一边。
+  //
+  // 服务端用受击者本地系（y 是世界高度、oz 沿正前方）；这里换成模型局部系：
+  // 原点 = 盾面几何中心（世界高度 (0.10+2.00)/2 = 1.05），正面朝 -z（与人物一致）。
+  // ==========================================================
+  var SHIELD_W = 1.24;          // 盾面总宽 = server 的 SHIELD_FACE_HW 0.62 × 2
+  var SHIELD_H = 1.90;          // 盾面总高 = server 的 0.10 → 2.00
+  var SHIELD_D = 0.11;          // 盾板厚度 = server 的 hd 0.055 × 2
+  var SHIELD_CY = 1.05;         // 盾面中心的世界高度（举盾时）
+  var SHIELD_OZ = 0.42;         // 盾面到身体中轴的前向距离 = server 的 SHIELD_FACE_OZ
+  var SHIELD_WIN_W = 0.30;      // 面窗宽 = SHIELD_WIN_HW 0.15 × 2
+  var SHIELD_WIN_H = 0.22;      // 面窗高 = 1.44 → 1.66
+  var SHIELD_WIN_CY = 0.50;     // 面窗中心的局部高度 = 1.55 - 1.05（正好在视线上）
+  // 四块盾面框：[宽, 高, 中心x, 中心y]，局部系。逐条对应 server.js 的同一张表，
+  // 全部由上面几个尺寸算出来——抄成字面量的话，改宽度就会和服务端错开。
+  //   窗左右的宽 = (盾宽 - 窗宽) / 2 = 0.47，轴心 = (窗宽 + 该宽) / 2 = ±0.385
+  //   窗上下的高 = 盾面上/下沿到窗沿的距离，中心取各自区间的中点
+  var SHIELD_SIDE_W = (SHIELD_W - SHIELD_WIN_W) / 2;
+  var SHIELD_WIN_TOP = SHIELD_WIN_CY + SHIELD_WIN_H / 2;      //  0.61
+  var SHIELD_WIN_BOT = SHIELD_WIN_CY - SHIELD_WIN_H / 2;      //  0.39
+  var SHIELD_TOP = SHIELD_H / 2;                              //  0.95
+  var SHIELD_BOT = -SHIELD_H / 2;                             // -0.95
+  var SHIELD_FRAME = [
+    // 窗下：世界 0.10 → 1.44（高 1.34）
+    [SHIELD_W, SHIELD_WIN_BOT - SHIELD_BOT, 0, (SHIELD_WIN_BOT + SHIELD_BOT) / 2],
+    // 窗上：世界 1.66 → 2.00（高 0.34，罩住头顶 1.90）
+    [SHIELD_W, SHIELD_TOP - SHIELD_WIN_TOP, 0, (SHIELD_TOP + SHIELD_WIN_TOP) / 2],
+    // 窗左 / 窗右
+    [SHIELD_SIDE_W, SHIELD_WIN_H, -(SHIELD_WIN_W + SHIELD_SIDE_W) / 2, SHIELD_WIN_CY],
+    [SHIELD_SIDE_W, SHIELD_WIN_H,  (SHIELD_WIN_W + SHIELD_SIDE_W) / 2, SHIELD_WIN_CY]
+  ];
+  // 把手在盾面局部系里的位置：背面偏上一点（真防爆盾的握把也在中线之上，
+  // 下半段更长好护腿）。第三人称的右手就握在这儿。
+  var SHIELD_GRIP_Y = 0.20;
+  var SHIELD_GRIP_Z = 0.085;
+  // 近战形态（盾击）的建模倍率。第三人称走的是通用武器管线，会再乘一次
+  // MELEE_TP_SCALE = 0.80，所以这里先放大到 1/0.80 = 1.25，乘完刚好是实物尺寸。
+  var SHIELD_MELEE_K = 1.25;
+  // 第三人称的两个姿态。举盾位必须**逐字对上服务端**：盾面几何中心在
+  // 世界高度 SHIELD_CY、身体中轴前方 SHIELD_OZ、零旋转（正面 -z），
+  // 这样画出来的盾面和 SHIELD_PLATE 的挡弹盒完全重合。改这一行等于改判定。
+  var SHIELD_TP_UP = [0, SHIELD_CY, -SHIELD_OZ, 0, 0, 0];
+  // 收盾位：背在背上。
+  // rotation.y 必须是 0（不是 π）：ry=0 时盾面**贴着后背**、握把和套箍朝外，
+  // 这既是真人的背法（握把朝内会顶在脊背上），也解决了两个实测缺陷——
+  //   1) ry=π 时背面那套握把硬件朝向身体，实测扎进背包 0.156m，套箍还从背包
+  //      下缘冒出来；ry=0 之后朝里的是平整的盾面，只剩包边那 2cm 的事（见下）。
+  //   2) ry=π 时从背后看到的是「盾面 + 面窗」，和正面举盾一模一样，敌人绕到背后
+  //      会以为还打不穿；ry=0 之后背后看到的是握把那一面，一眼就知道盾没举起来。
+  // 举盾位的盾面法向也是朝前的，所以两个姿态 ry 都是 0，中间不用翻面，
+  // 只是沿 SHIELD_TP_SWING 从体侧绕过去——正是真人换手的走法。
+  // z 取 0.44 是量出来的：盾组最靠前的不是盾板本体（半厚 0.055），而是四周
+  // 那圈包边，它比板面又凸出 0.021，所以真正的前沿在 z-0.084。拿盾组和身体
+  // 逐件求 AABB 交集扫过 z：0.40 还有 0.020m 重叠、0.42 刚好贴上、0.44 起彻底
+  // 分开。取 0.44 留 2cm 余量，看上去就是搭在背包上。
+  // rotation：原来是 rz 0.16（斜挎的歪劲），盾面加大到 1.24×1.90 之后必须换成
+  // rx 0.10。原因是**血条**：血条挂在 y=2.15，而 rz 会把包围盒竖直方向撑成
+  // 1.90·cos(0.16) + 1.24·sin(0.16) = 2.07m，中心 1.10 时上沿顶到 2.14，
+  // 从背后看盾板正好糊住血条（盾在 z=0.44、血条在 z=0，盾离相机更近）。
+  // 旧盾只有 1.64×0.92，同样的 rz 上沿才 1.98，压不到血条，所以这是加大盾面
+  // 带出来的连带缺陷。rx 只绕横轴倾，竖直包围盒还是 1.90·cos(0.10)≈1.89，
+  // 中心抬到 1.13 之后是 0.18~2.08：上沿离血条留 7cm，下沿离地留 18cm
+  // （旧值 1.10 + rz 会掉到 0.06，走路时几乎贴地）。
+  // rx 取**正值**：盾上沿往身后倒、下沿往腿侧收。取负值会让上沿压向头盔。
+  var SHIELD_TP_STOW = [0, 1.13, 0.44, 0.10, 0, 0];
+  // 收↔举的过渡里额外往体侧外摆的幅度。不加这一项，盾会沿直线从背后
+  // 平移到胸前，中途整块板穿过躯干；外摆之后是「从身侧绕过来」。
+  var SHIELD_TP_SWING = 0.55;
+  // 举盾时手枪挂点的偏移量（乘 shieldLerp 叠加在 WEAPON_MOUNT 上）。
+  // 不给这个偏移，枪身正好长在盾板那 11cm 的厚度里：挂点 z=-0.375，而盾板占
+  // -0.365 ~ -0.475，实测第三人称能看到半截手枪从盾面里穿出来（正面/侧面都露）。
+  // 真正解决穿模的是 **+z 0.17**：把枪收到 z=-0.205，落在身体和盾板之间那段空档里，
+  // 跟 -0.365~-0.475 这片盾板完全不相交，盾面怎么放大都不会再穿出来。
+  // +x 0.30 只是把枪从身体中轴挪开（挂点 x 变成 0.515）。盾面半宽原来是 0.46，
+  // 0.515 刚好探出右缘，所以旧注释写的是「从盾侧探出枪射击」；现在半宽加到 0.62，
+  // 0.515 落在盾面**背后**，正面看不见枪口了。这里**故意不再往外加**：
+  // 要探出 0.62 的右缘得把挂点推到 0.70 开外，那是一条完全平举到体侧的胳膊，
+  // 比「枪被盾挡住」难看得多。1.24m 宽的盾本来就不可能从侧面绕过去打——
+  // 举盾时藏在盾后、收盾时才正常持枪，这才是这面盾该有的取舍。
+  var SHIELD_TP_GUN_OFF = [0.30, -0.02, 0.17];
+
+  var SHMAT = null;
+  function shieldMats() {
+    if (SHMAT) return SHMAT;
+    SHMAT = {
+      body: new THREE.MeshStandardMaterial({ color: 0x2b3038, roughness: 0.62, metalness: 0.34, envMapIntensity: 0.9 }),
+      rim: new THREE.MeshStandardMaterial({ color: 0x14171b, roughness: 0.46, metalness: 0.72, envMapIntensity: 1.1 }),
+      warn: new THREE.MeshStandardMaterial({ color: 0xa8842a, roughness: 0.6, metalness: 0.2, envMapIntensity: 0.7 }),
+      // 面窗：聚碳酸酯。opacity 必须卡在中间——全透明就没有「这里是个洞」的提示，
+      // 不透明就等于没有窗（对面看不到人、自己也看不出该往哪打）。0.26 时
+      // 窗框以内明显发亮、后面的人影还看得清。
+      // depthWrite:false 是必须的：留 true 时这一片会写深度，排在它之后画的
+      // 远端玩家会被整片挡掉，「透过窗看见敌人」就没了。
+      glass: new THREE.MeshStandardMaterial({
+        color: 0xa9cfe2, transparent: true, opacity: 0.26, depthWrite: false,
+        roughness: 0.07, metalness: 0.0, envMapIntensity: 1.4,
+        side: THREE.DoubleSide
+      })
+    };
+    return SHMAT;
+  }
+
+  // k        缩放（1 = 实物）
+  // gy / gz  把手位置；给了就把模型原点挪到把手上（第三人称握持需要），否则原点在盾心
+  function buildShieldGeo(k, gy, gz) {
+    var S = shieldMats(), M = weaponMats();
+    var g = new THREE.Group();
+    var inner = new THREE.Group();
+    inner.position.set(0, -(gy || 0) * k, -(gz || 0) * k);
+    g.add(inner);
+
+    var hd = SHIELD_D * 0.5;
+    // ---- 盾面本体：四块框，与 server.js 的 SHIELD_PLATE 一一对应 ----
+    for (var i = 0; i < SHIELD_FRAME.length; i++) {
+      var f = SHIELD_FRAME[i];
+      inner.add(rBox(f[0] * k, f[1] * k, SHIELD_D * k, 0.020 * k, S.body,
+        f[2] * k, f[3] * k, 0, 'y'));
+    }
+    // ---- 面窗玻璃 ----
+    // z 要让玻璃**前表面与盾板前表面齐平**（= server 的 oz - hd）。
+    // 原来写 z=0（板厚正中），玻璃前表面就缩在 -0.009 处，比盾面凹进去 46mm：
+    // 实测射线打在 x=0 的窗心时，先撞到的不是玻璃，看着也像窗片浮在板子中间。
+    // 厚度 0.018 的一半是 0.009，所以中心放 -(hd - 0.009)。
+    var glassTh = 0.018;
+    var glass = new THREE.Mesh(
+      new THREE.BoxGeometry(SHIELD_WIN_W * k, SHIELD_WIN_H * k, glassTh * k), S.glass);
+    glass.position.set(0, SHIELD_WIN_CY * k, -(hd - glassTh * 0.5) * k);
+    inner.add(glass);
+    // ---- 窗框：一圈凸起的包边，把面窗从大片盾面里「框」出来。
+    // 这一圈很重要：没有它，攻方在几十米外分不清哪块是窗，盾山这个角色
+    // 就变成了纯粹的「打不死」而不是「有个弱点」。
+    var wz = -(hd + 0.012) * k;
+    var wbw = SHIELD_WIN_W + 0.09, wbh = SHIELD_WIN_H + 0.09;
+    inner.add(rBox(wbw * k, 0.045 * k, 0.024 * k, 0.008 * k, S.rim, 0, (SHIELD_WIN_CY + wbh * 0.5 - 0.022) * k, wz, 'x'));
+    inner.add(rBox(wbw * k, 0.045 * k, 0.024 * k, 0.008 * k, S.rim, 0, (SHIELD_WIN_CY - wbh * 0.5 + 0.022) * k, wz, 'x'));
+    inner.add(rBox(0.045 * k, wbh * k, 0.024 * k, 0.008 * k, S.rim, -(wbw * 0.5 - 0.022) * k, SHIELD_WIN_CY * k, wz, 'y'));
+    inner.add(rBox(0.045 * k, wbh * k, 0.024 * k, 0.008 * k, S.rim, (wbw * 0.5 - 0.022) * k, SHIELD_WIN_CY * k, wz, 'y'));
+    // ---- 外沿包边：四条，压在盾面外缘上（不外扩，免得视觉比判定盒大一圈）----
+    var ez = -(hd + 0.008) * k, ei = 0.030;
+    inner.add(rBox(SHIELD_W * k, 0.060 * k, 0.016 * k, 0.006 * k, S.rim, 0, (SHIELD_H * 0.5 - ei) * k, ez, 'x'));
+    inner.add(rBox(SHIELD_W * k, 0.060 * k, 0.016 * k, 0.006 * k, S.rim, 0, -(SHIELD_H * 0.5 - ei) * k, ez, 'x'));
+    inner.add(rBox(0.060 * k, SHIELD_H * k, 0.016 * k, 0.006 * k, S.rim, -(SHIELD_W * 0.5 - ei) * k, 0, ez, 'y'));
+    inner.add(rBox(0.060 * k, SHIELD_H * k, 0.016 * k, 0.006 * k, S.rim, (SHIELD_W * 0.5 - ei) * k, 0, ez, 'y'));
+    // ---- 正面加强筋（两条竖的）+ 一条警示带 ----
+    // 位置随盾面尺寸走：筋从下缘往上收到面窗下沿之前（不能压到窗框），
+    // 横向摆在「窗框外缘与盾侧边」的中点，放大盾面后不会挤在中间。
+    var ribX = (SHIELD_WIN_W * 0.5 + SHIELD_W * 0.5) * 0.5;   // ±0.46
+    var ribTop = SHIELD_WIN_BOT - 0.09, ribBot = SHIELD_BOT + 0.09;
+    inner.add(rBox(0.055 * k, (ribTop - ribBot) * k, 0.014 * k, 0.006 * k, S.rim, -ribX * k, (ribTop + ribBot) * 0.5 * k, ez, 'y'));
+    inner.add(rBox(0.055 * k, (ribTop - ribBot) * k, 0.014 * k, 0.006 * k, S.rim, ribX * k, (ribTop + ribBot) * 0.5 * k, ez, 'y'));
+    inner.add(rBox((SHIELD_W - 0.30) * k, 0.085 * k, 0.012 * k, 0.005 * k, S.warn, 0, (SHIELD_BOT + 0.36) * k, ez, 'x'));
+    // ---- 四角铆钉 ----
+    for (var sx = -1; sx <= 1; sx += 2) {
+      for (var sy = -1; sy <= 1; sy += 2) {
+        var rv = mCylZ(0.014 * k, 0.014 * k, 0.020 * k, M.trimSteel, 10);
+        rv.position.set(sx * (SHIELD_W * 0.5 - ei) * k, sy * (SHIELD_H * 0.5 - ei) * k, ez - 0.006 * k);
+        inner.add(rv);
+      }
+    }
+    // ---- 背面：握把横杆 + 小臂套箍 + 两块托板 ----
+    var bz = (hd + 0.030) * k;
+    var bar = mCylY(0.020 * k, 0.020 * k, 0.20 * k, M.trimSteel, 12);
+    bar.rotation.z = Math.PI / 2;
+    bar.position.set(0, SHIELD_GRIP_Y * k, bz);
+    inner.add(bar);
+    // 小臂套箍必须在握把**下方**（朝肘方向），不能在上方。
+    // 原来写的是 SHIELD_GRIP_Y + 0.24 = 0.44，而面窗中心就在 0.43——
+    // 这个 φ140 的钢环正好横在窗口里，第一人称透过窗看出去被它拦腰截断，
+    // 而且射线测试里窗心第一个撞到的是它而不是玻璃。
+    // 挪到 -0.26（握把下 26cm ≈ 一条小臂），肘在箍里、手在杆上，才是真持盾姿势。
+    inner.add(loopX(0.065 * k, 0.015 * k, S.rim, 0, (SHIELD_GRIP_Y - 0.26) * k, (hd + 0.045) * k, 18));
+    inner.add(rBox(0.24 * k, 0.055 * k, 0.05 * k, 0.010 * k, S.rim, 0, (SHIELD_GRIP_Y + 0.10) * k, (hd + 0.014) * k, 'x'));
+    inner.add(rBox(0.24 * k, 0.055 * k, 0.05 * k, 0.010 * k, S.rim, 0, (SHIELD_GRIP_Y - 0.10) * k, (hd + 0.014) * k, 'x'));
+    // ---- 背面其余细节 ----
+    // 第一人称整局盯着的就是这一面（vmShieldGroup 看到的是盾背），原来只有
+    // 一根横杆 + 一个套箍 + 两块托板，剩下是一整片空白；收盾之后从背后看到的
+    // 也是这一面。补上包边、横筋、小臂衬垫、背带四样。
+    // 铁律：面窗那条带子（局部 y SHIELD_WIN_BOT~SHIELD_WIN_TOP）后面**不能放东西**，
+    // 否则「透过面窗看见对面的人」就没了，第一人称也看不出去。
+    // 下面几条的 y 全部从盾面尺寸算出来，就是为了放大盾面时不会有哪条筋
+    // 悄悄挪进窗口后面——盾高从 1.64 加到 1.90 时，原来写死的 0.63 正好撞上窗框。
+    var bz2 = (hd + 0.008) * k;
+    inner.add(rBox(SHIELD_W * k, 0.055 * k, 0.014 * k, 0.005 * k, S.rim, 0, (SHIELD_H * 0.5 - ei) * k, bz2, 'x'));
+    inner.add(rBox(SHIELD_W * k, 0.055 * k, 0.014 * k, 0.005 * k, S.rim, 0, -(SHIELD_H * 0.5 - ei) * k, bz2, 'x'));
+    inner.add(rBox(0.055 * k, SHIELD_H * k, 0.014 * k, 0.005 * k, S.rim, -(SHIELD_W * 0.5 - ei) * k, 0, bz2, 'y'));
+    inner.add(rBox(0.055 * k, SHIELD_H * k, 0.014 * k, 0.005 * k, S.rim, (SHIELD_W * 0.5 - ei) * k, 0, bz2, 'y'));
+    var ribsY = [SHIELD_WIN_TOP + 0.16, SHIELD_WIN_BOT - 0.20, SHIELD_WIN_BOT - 0.55, SHIELD_BOT + 0.20];
+    for (var ri = 0; ri < ribsY.length; ri++) {
+      inner.add(rBox((SHIELD_W - 0.16) * k, 0.042 * k, 0.016 * k, 0.005 * k, S.body, 0, ribsY[ri] * k, bz2, 'x'));
+    }
+    // 小臂衬垫：垫在套箍里，肘压在上面
+    inner.add(rBox(0.15 * k, 0.30 * k, 0.034 * k, 0.012 * k, S.rim, 0, (SHIELD_GRIP_Y - 0.16) * k, (hd + 0.030) * k, 'y'));
+    // 斜挎背带两条：从上缘两角收到握把托板，收盾时正是它们朝外。
+    // x 取 ±0.30 让斜带整条都在面窗左右之外（窗半宽 0.15），不会横穿视野。
+    for (var ss = -1; ss <= 1; ss += 2) {
+      var strap = rBox(0.048 * k, 0.70 * k, 0.012 * k, 0.004 * k, S.body,
+        ss * 0.30 * k, (SHIELD_WIN_CY + 0.08) * k, (hd + 0.005) * k, 'y');
+      strap.rotation.z = ss * 0.42;
+      inner.add(strap);
+    }
+
+    g.userData.shieldGlass = glass;
+    return g;
+  }
+
+  // 盾击的「武器模型」：就是同一面盾，原点挪到把手上。
+  // 注意它**不进** createMeleeModels 的第一人称列表——2 米高的盾摆在
+  // vmMeleeGroup 那个 0.55m 的挂点上会糊满整个屏幕，第一人称走 vmShieldGroup
+  // 单独一套姿态（见 buildShieldViewmodel）。这里只服务第三人称。
+  function buildShieldbash(withHands) {
+    var g = buildShieldGeo(SHIELD_MELEE_K, SHIELD_GRIP_Y, SHIELD_GRIP_Z);
+    if (withHands) addHands(g, [0, 0, 0], null, { rRotX: 0.15 });
+    return g;
+  }
+
+  var MELEE_BUILDERS = { knife: buildKnife, axe: buildAxe, katana: buildKatana, kukri: buildKukri, chainsaw: buildChainsaw, shieldbash: buildShieldbash };
   function buildMeleeModel(id, withHands) {
     var fn = MELEE_BUILDERS[id] || buildKnife;
     return fn(withHands);
@@ -2938,7 +3383,7 @@ var smokeParticles = [];
   // ----------------------------------------------------------
   function createGunModels() {
     vmGunGroup = new THREE.Group();
-    ['pistol', 'shotgun', 'rifle', 'smg', 'awp', 'dmr', 'lmg'].forEach(function (id) {
+    ['pistol', 'shotgun', 'rifle', 'ak47', 'smg', 'awp', 'dmr', 'lmg'].forEach(function (id) {
       var model = buildGunModel(id, true);
       muzzleAnchors[id] = model.userData.muzzle;
       vmGunGroup.add(model);
@@ -2960,6 +3405,52 @@ var smokeParticles = [];
     vmGroup.add(vmMeleeGroup);
   }
 
+  // ----------------------------------------------------------
+  // 第一人称盾牌
+  //
+  // 单独一套挂点，不走 vmMeleeGroup：那个挂点在相机前 0.55m，一面 1.90m 高的盾
+  // 摆上去会糊满整个屏幕。这里挂到 camera 上、缩到 0.52，并且把**面窗中心**
+  // 压到组原点上，让下面那三个姿态可以直接照"面窗要摆在哪"来写。
+  //
+  // 三个姿态（shieldPose 每帧插值）：
+  //   举盾  架在**左前方**，盾面与视线垂直（零旋转），盾面右缘让开准星
+  //   收盾  往左下方翻下去，只在视野角落留一条边
+  //   盾击  近战槽的预备姿势（端到身前偏右，给挥击留出行程）
+  //
+  // 举盾位为什么不是「面窗正对准星」：面窗只有 0.30×0.22m，缩放 0.52 后在
+  // 相机前 0.55m 处只占屏高的 15%，正对准星等于把视野压成一条缝，还得透过
+  // 0.26 不透明度的玻璃瞄准。真实持盾也是盾在左臂、枪从右侧探出去打，
+  // 所以这里把盾摆在准星左侧、上沿过眉，右缘空出准星那一小块给手枪。
+  //
+  // 举盾位的旋转必须是**全零**。原来给的是 (0.02, -0.16, 0.10)：ry -0.16 把盾面
+  // 向外转了 9°、rz 0.10 又歪了 6°，第一人称看过去盾是斜端着的，既不像举盾
+  // 也和第三人称/服务端那块**正对前方**的盾面对不上（SHIELD_TP_UP 与
+  // SHIELD_PLATE 都是零旋转的正面板）。零旋转之后三处才是同一个姿态。
+  // 挡弹判定完全在服务端（SHIELD_PLATE，按 yaw 定位），跟这套摆位无关，
+  // 所以调这几个数只影响手感，不会让「挡住的」跟着歪。
+  // ----------------------------------------------------------
+  var VM_SHIELD_K = 0.52;
+  // [px,py,pz, rx,ry,rz]，相机局部系。组原点 = 面窗中心（见 buildShieldViewmodel）
+  //
+  // px = -0.40：盾放大后半宽 0.62×0.52 = 0.322，右缘落在 -0.078，
+  // 即准星左侧约 8°——盾正持不歪，同时准星那一小块仍然空着。
+  // py = +0.06：组原点是面窗中心，盾上缘在原点上方 (0.95-0.50)×0.52 = 0.234，
+  // 加上 py 之后上缘约在视线上方 28°（竖直半视角 37.5°），即上沿过眉但仍在屏内；
+  // 下缘 -0.69 早就出屏了。抬这 6cm 是为了让盾遮住左半屏，而不是只挡住腰部。
+  var VM_SHIELD_UP = [-0.40, 0.06, -0.55, 0, 0, 0];
+  var VM_SHIELD_DOWN = [-0.46, -0.86, -0.48, -0.52, -0.70, 0.36];
+  var VM_SHIELD_BASH = [0.06, -0.30, -0.58, 0.12, -0.34, -0.10];
+  function buildShieldViewmodel() {
+    vmShieldGroup = new THREE.Group();
+    // 把面窗中心挪到组原点：盾心在局部 y=0、面窗在 y=SHIELD_WIN_CY，
+    // 减掉 SHIELD_WIN_CY 之后，上面三个姿态的 [px,py,pz] 就直接是"面窗在哪"。
+    var m = buildShieldGeo(VM_SHIELD_K, SHIELD_WIN_CY, 0);
+    vmShieldGroup.add(m);
+    vmShieldGroup.visible = false;
+    camera.add(vmShieldGroup);
+    vmShieldModel = m;
+  }
+
   function buildViewmodels() {
     vmGroup = new THREE.Group();
     vmGroup.position.set(0.32, -0.3, -0.55);
@@ -2968,6 +3459,7 @@ var smokeParticles = [];
 
     createGunModels();
     createMeleeModels();
+    buildShieldViewmodel();
     applyWeaponVisibility();
   }
 
@@ -2997,10 +3489,11 @@ var smokeParticles = [];
   // 不能在这里直接写。
   // ----------------------------------------------------------
   var RELOAD_STYLE = {
-    pistol: 'mag', rifle: 'mag', smg: 'mag', dmr: 'mag', lmg: 'mag', awp: 'bolt', shotgun: 'pump'
+    pistol: 'mag', rifle: 'mag', ak47: 'mag', smg: 'mag', dmr: 'mag', lmg: 'mag', awp: 'bolt', shotgun: 'pump'
   };
-  // 拉机柄/枪机/泵的行程：手枪套筒短，狙的枪机和泵的行程长
-  var RELOAD_THROW = { pistol: 0.030, rifle: 0.055, smg: 0.040, dmr: 0.055, lmg: 0.040, awp: 0.085, shotgun: 0.100 };
+  // 拉机柄/枪机/泵的行程：手枪套筒短，狙的枪机和泵的行程长。
+  // AK 的拉机柄和枪机框一体，行程比 AR 的小柄长一点。
+  var RELOAD_THROW = { pistol: 0.030, rifle: 0.055, ak47: 0.065, smg: 0.040, dmr: 0.055, lmg: 0.040, awp: 0.085, shotgun: 0.100 };
 
   // 段内归一化进度：u 落在 [a,b] 外就吃 0/1，落在内就线性升到 1
   function rlSeg(u, a, b) {
@@ -3670,6 +4163,15 @@ var smokeParticles = [];
     bodyGroup.add(pelvis, leftLeg, rightLeg, gear, chest,
       headGroup, aimGroup);
 
+    // 举盾姿态的盾牌。挂在**根节点**（group）而不是手臂上，是刻意的：
+    // 服务端的挡弹盒 SHIELD_PLATE 是按「受击者位置 + yaw」定的，跟手臂动画无关。
+    // 挂到手臂上，盾就会跟着走路摆手左右晃，于是「看到的盾」和「挡弹的盾」错开
+    // 十几厘米——瞄着盾面开枪却打死人（或者反过来）。挂根节点才逐帧对齐。
+    // 收盾姿态挪到背上（见 SHIELD_TP_STOW），此时它不挡任何东西。
+    var shieldTP = buildShieldGeo(1, 0, 0);
+    shieldTP.visible = false;
+    group.add(shieldTP);
+
     // 血条（挂在根节点，逐帧朝向相机）
     var hb = createHealthBar();
     hb.group.position.y = 2.15;
@@ -3694,9 +4196,12 @@ var smokeParticles = [];
       targetPos: new THREE.Vector3(0, 0, 0), renderPos: new THREE.Vector3(0, 0, 0),
       targetYaw: 0, renderYaw: 0, targetPitch: 0, renderPitch: 0,
       vel: new THREE.Vector3(0, 0, 0), walkPhase: Math.random() * Math.PI * 2,
-      deadT: 0, hp: 100, alive: true, current: 'primary', melee: 'knife',
+      deadT: 0, hp: 100, maxHp: 100, alive: true, current: 'primary', melee: 'knife',
       primary: 'rifle', secondary: 'pistol', kills: 0, deaths: 0, streak: 0, bestStreak: 0,
       crouch: false,
+      // 盾山：hero 决定要不要显示盾，shield 是快照里的举/收位，
+      // shieldLerp 是它的插值量（0 收 / 1 举）
+      hero: DEFAULT_HERO, shield: false, shieldLerp: 0, shieldTP: shieldTP,
       fireAnim: 0, swingAnim: 0, throwAnim: 0, firstUpdate: true,
       // 换弹动画：已播时长 / 总时长 / 播的是哪把枪的模型
       reloadAnim: 0, reloadDur: 0, reloadModel: null, reloadId: '',
@@ -3706,7 +4211,9 @@ var smokeParticles = [];
       // （近战时会被写成 1.0），换回长枪时得有个干净的初值可用。
       gunSuppFrac: suppFrac,
       // 当前武器的挂点 / 预备姿势 / 是否双手持握，由 setHoldAnchors 维护
-      mount: WEAPON_MOUNT, holdRest: null, twoHand: true,
+      // mountBuf 是盾山举盾时算出来的临时挂点（不能就地改 WEAPON_MOUNT，
+      // 那是所有玩家共用的常量数组）
+      mount: WEAPON_MOUNT, mountBuf: [0, 0, 0], holdRest: null, twoHand: true,
       // 挥砍：这一刀是哪种弧线、多长
       swingStyle: 'slashR', swingDur: 0.18
     };
@@ -4003,6 +4510,10 @@ var smokeParticles = [];
     else if (weaponId === 'awp') { playNoise(0.32, 500, v * 1.0, 'bandpass'); playTone(90, 0.22, v * 0.6, 'sawtooth'); playNoise(0.18, 2400, v * 0.35, 'bandpass'); }
     else if (weaponId === 'dmr') { playNoise(0.2, 900, v * 0.8, 'bandpass'); playTone(110, 0.12, v * 0.5, 'sawtooth'); }
       else if (weaponId === 'rifle') { playNoise(0.09, 2300, v * 0.45, 'bandpass'); playTone(180, 0.06, v * 0.3, 'square'); }
+    // AK47：7.62 中口径，比 5.56 的步枪低沉厚实一档（噪声中心频率下移、
+    // 低频基音更响更长）。这条不只是音色喜好——AK 和步枪的手感差别全在
+    // 「一枪的重量」上，声音要是和步枪一样脆，玩家就分不出自己拿的是哪把。
+    else if (weaponId === 'ak47') { playNoise(0.12, 1600, v * 0.60, 'bandpass'); playTone(140, 0.09, v * 0.45, 'sawtooth'); }
     // 冲锋枪：比步枪更短更脆（小口径手枪弹），70ms 一发时才不会糊成一片轰鸣
     else if (weaponId === 'smg') { playNoise(0.06, 2900, v * 0.40, 'bandpass'); playTone(230, 0.045, v * 0.26, 'square'); }
     else if (weaponId === 'lmg') { playNoise(0.11, 1500, v * 0.6, 'bandpass'); playTone(130, 0.08, v * 0.4, 'sawtooth'); }
@@ -4016,6 +4527,14 @@ var smokeParticles = [];
         return;
       }
     ensureAudio();
+    // 盾击：20kg 钢板砸上去是一声闷的金属"咣"，不是刀那种"嗖"。
+    // 低频撞击 + 一小段金属余响，跟其他近战一听就能分开。
+    if (weaponId === 'shieldbash') {
+      playNoise(0.12, far ? 260 : 340, far ? 0.24 : 0.55, 'lowpass');
+      playTone(far ? 95 : 120, 0.18, far ? 0.14 : 0.32, 'square');
+      setTimeout(function () { playTone(far ? 620 : 780, 0.09, far ? 0.06 : 0.14, 'triangle'); }, 40);
+      return;
+    }
     playNoise(0.16, far ? 500 : 700, far ? 0.2 : 0.5, 'lowpass');
   }
 
@@ -4030,6 +4549,15 @@ var smokeParticles = [];
       return;
     }
     playTone(1400, 0.05, 0.35, 'square');
+  }
+
+  // 打在盾面上的反馈音：一声短促的金属跳弹，明显不同于命中音（playHitSound
+  // 是 1400Hz 的"叮"）。没有这一声的话，射手只会觉得"这枪没打中"，
+  // 而实际上是被盾挡了——他需要知道该换个角度打面窗，而不是继续瞎打。
+  function playRicochetSound() {
+    ensureAudio();
+    playNoise(0.06, 3200, 0.30, 'bandpass');
+    playTone(880, 0.07, 0.16, 'triangle');
   }
 
   function playReloadSound() {
@@ -4209,6 +4737,26 @@ var smokeParticles = [];
       scene.add(mesh);
       impacts.push({ mesh: mesh, mat: mesh.material, vel: vel, life: rand(0.25, 0.55), maxLife: 0.55 });
     }
+  }
+
+  // 按命中部位挑弹着特效。三种情况必须分得开，否则盾山这套玩法读不出来：
+  //  shield —— 被盾挡住。冷白的金属跳弹火花，**没有血**。原来只看 tr.hitPlayer，
+  //            打在盾上会喷一团血雾，看起来像是打死人了（其实零伤害）。
+  //  glass  —— 打穿面窗。淡青的玻璃碎屑 + 一小股血，就是"打中了弱点"。
+  //  其他   —— 照旧的血雾，head 更亮更多。
+  function addZoneImpact(pos, zone, onBody) {
+    if (zone === 'shield') {
+      addImpact(pos, 0xdfe6ee, 9, false);
+      return;
+    }
+    if (zone === 'glass') {
+      addImpact(pos, 0xbfe4f2, 10, false);
+      addImpact(pos, 0xff3a3a, 8, false);
+      return;
+    }
+    if (!onBody) { addImpact(pos, 0xffd27a, 6, false); return; }
+    var head = zone === 'head';
+    addImpact(pos, head ? 0xff2222 : 0xff6655, head ? 18 : 10, false);
   }
 
     function getSmokeTexture() {
@@ -4590,8 +5138,11 @@ var smokeParticles = [];
     healthText.textContent = Math.max(0, Math.round(local.hp)) + ' / ' + local.maxHp;
       if (localNameTag) localNameTag.textContent = '玩家：' + (local.name || '未命名');
       if (statText) statText.textContent = '击杀 ' + local.kills + ' · 死亡 ' + local.deaths;
-    healthFill.style.background = local.hp > 60 ? 'linear-gradient(90deg,#3fb950,#7ee787)' :
-      (local.hp > 30 ? 'linear-gradient(90deg,#d29922,#e3b341)' : 'linear-gradient(90deg,#f85149,#ff7b72)');
+    // 颜色阈值按**比例**而不是绝对血量。写死 60/30 的话，盾山（200 血）
+    // 掉到 61 血还是绿的——那已经是 30% 的残血，等看到黄色人早死了。
+    var hpFrac = local.hp / (local.maxHp || 100);
+    healthFill.style.background = hpFrac > 0.6 ? 'linear-gradient(90deg,#3fb950,#7ee787)' :
+      (hpFrac > 0.3 ? 'linear-gradient(90deg,#d29922,#e3b341)' : 'linear-gradient(90deg,#f85149,#ff7b72)');
 
     var isMelee = local.current === 'melee';
     weaponName.textContent = isMelee ? WEAPONS[local.melee].name : WEAPONS[currentRangedId()].name;
@@ -4680,7 +5231,9 @@ var smokeParticles = [];
   // 第二次不会重播动画（class 没变过，浏览器认为没有状态变化）。
   function showHitmarker(zone) {
     hitmarker.classList.remove('show');
-    hitmarker.classList.toggle('headshot', zone === 'head');
+    // glass（打穿盾山面窗）沿用爆头那套高亮配色：它同样是"打中了要害"，
+    // 而且在交火里必须一眼分辨出来——打盾面是零伤害，打面窗才有意义。
+    hitmarker.classList.toggle('headshot', zone === 'head' || zone === 'glass');
     void hitmarker.offsetWidth;
     hitmarker.classList.add('show');
   }
@@ -4689,7 +5242,10 @@ var smokeParticles = [];
   // 霰弹枪一次 8 颗，可能同时打中头和腿，这时候该报头。
   function bestHitZone(tracers) {
     if (!tracers) return null;
-    var rank = { head: 4, torso: 3, leg: 2, arm: 1 };
+    // glass 排在 head 之下、torso 之上：它是 1.5 倍的弱点，但不是 2.35 倍的爆头。
+    // shield 不进这张表——被挡下的弹道根本不该产生命中反馈（server 也没把它
+    // 放进 hitPlayers），rank[undefined] 取 0 正好把它过滤掉。
+    var rank = { head: 5, glass: 4, torso: 3, leg: 2, arm: 1 };
     var best = null;
     for (var i = 0; i < tracers.length; i++) {
       var z = tracers[i].hitZone;
@@ -4726,7 +5282,7 @@ var smokeParticles = [];
     // 所以这里 msg.zone 为空是正常情况，不是缺字段。
     if (msg.zoneLabel) {
       var zoneEl = document.createElement('span');
-      zoneEl.className = 'zone' + (msg.zone === 'head' ? ' head' : '');
+      zoneEl.className = 'zone' + (msg.zone === 'head' || msg.zone === 'glass' ? ' head' : '');
       zoneEl.textContent = msg.zone === 'head' ? '爆头' : msg.zoneLabel;
       div.appendChild(zoneEl);
     }
@@ -4735,6 +5291,31 @@ var smokeParticles = [];
     setTimeout(function () {
       if (div.parentNode) div.parentNode.removeChild(div);
     }, 5000);
+  }
+
+  // 屏幕提示：借用击杀提示那一栏（同一套样式和自动消失逻辑），只是一行纯文本。
+  function showNotice(text, ms) {
+    var div = document.createElement('div');
+    div.className = 'kill-item';
+    div.style.color = '#ffcf6b';
+    div.textContent = text;
+    killfeed.appendChild(div);
+    while (killfeed.children.length > 5) killfeed.removeChild(killfeed.firstChild);
+    setTimeout(function () {
+      if (div.parentNode) div.parentNode.removeChild(div);
+    }, ms || 8000);
+  }
+
+  // 服务端不认识本干员时提示一次（整条命只提示一次，别每帧刷屏）。
+  // 唯一已知成因：node server.js 是加入干员系统之前起的旧进程——它会把
+  // 盾山当成普通突击兵（100 血、发一把步枪、举盾完全不挡弹）。这种情况
+  // 光看客户端是一团怪现象（血条 100、突然变步枪、盾像纸），所以直接说清楚。
+  var staleWarned = false;
+  function warnStaleServer() {
+    if (staleWarned) return;
+    staleWarned = true;
+    showNotice('⚠ 服务端未识别干员「' + (heroOf(local.hero).name || local.hero) +
+      '」：请重启 node server.js（旧进程会把盾山当成 100 血的突击兵）', 12000);
   }
 
   function updateScoreboard() {
@@ -4840,6 +5421,7 @@ var smokeParticles = [];
       send({
         t: 'join',
         name: local.name,
+        hero: selectedHero,
         melee: selectedMelee,
         primary: selectedPrimary
       });
@@ -4883,19 +5465,31 @@ var smokeParticles = [];
           local.yaw = msg.yaw || 0;
           local.pitch = 0;
         }
-        local.primary = msg.primary || selectedPrimary;
+        // 干员以服务端为准（本地选的可能被改过），maxHp 也跟着它走——
+        // 盾山是 200 血，血条宽度和颜色阈值全按 maxHp 归一化。
+        local.hero = HEROES[msg.hero] ? msg.hero : selectedHero;
+        var jh = heroOf(local.hero);
+        local.maxHp = (typeof msg.maxHp === 'number') ? msg.maxHp : jh.maxHp;
+        // 服务端没回干员、或者回的跟本地选的不是同一个 = 它不认识干员系统。
+        // 正常的服务端一定会原样回显 p.hero（handleJoin 只在 id 非法时才换成
+        // 默认干员，而 id 就是这个客户端发过去的），所以这里不匹配只有一种解释：
+        // 跑的是加入干员之前的旧 server.js。血量/配装/挡弹会全部按突击兵算，
+        // 光看客户端只会看到一堆莫名其妙的现象，所以直接把结论摆出来。
+        if (selectedHero !== DEFAULT_HERO && msg.hero !== selectedHero) warnStaleServer();
+        local.shield = false;
+        local.primary = msg.primary || (jh.pistolOnly ? 'pistol' : selectedPrimary);
         local.secondary = 'pistol';
-        // ranged 始终跟着 primary，不能再拿本地选的枪盖一遍：服务端如果回的
+        // ranged 始终跟着当前槽，不能再拿本地选的枪盖一遍：服务端如果回的
         // primary 和本地选的不一样，就会出现"弹匣按 A 枪算、模型是 B 枪"。
-        local.ranged = local.primary;
-        local.current = 'primary';
-        local.melee = selectedMelee;
+        local.current = jh.pistolOnly ? 'secondary' : 'primary';
+        local.ranged = local.current === 'secondary' ? local.secondary : local.primary;
+        local.melee = jh.melee || selectedMelee;
         local.ammoPrimary = WEAPONS[local.primary].mag;
         local.ammoSecondary = WEAPONS.pistol.mag;
-        local.ammo = local.ammoPrimary;
-        local.reservePrimary = (typeof msg.reservePrimary === 'number') ? msg.reservePrimary : WEAPONS[local.primary].reserve;
-        local.reserveSecondary = (typeof msg.reserveSecondary === 'number') ? msg.reserveSecondary : WEAPONS.pistol.reserve;
-        local.reserve = local.reservePrimary;
+        local.ammo = local.current === 'secondary' ? local.ammoSecondary : local.ammoPrimary;
+        local.reservePrimary = (typeof msg.reservePrimary === 'number') ? msg.reservePrimary : WEAPONS[local.primary].reserve * (jh.reserveK || 1);
+        local.reserveSecondary = (typeof msg.reserveSecondary === 'number') ? msg.reserveSecondary : WEAPONS.pistol.reserve * (jh.reserveK || 1);
+        local.reserve = local.current === 'secondary' ? local.reserveSecondary : local.reservePrimary;
         local.grenadeCount = (typeof msg.grenadeCount === 'number') ? msg.grenadeCount : GRENADE_MAX;
         local.smokeCount = (typeof msg.smokeCount === 'number') ? msg.smokeCount : SMOKE_MAX;
         local.hp = local.maxHp;
@@ -4984,9 +5578,28 @@ var smokeParticles = [];
         if (typeof pd.bestStreak === 'number') local.bestStreak = pd.bestStreak;
         local.ammo = pd.ammo;
         local.reloading = pd.reloading;
-        local.current = pd.current;
-        local.melee = pd.melee;
-        local.ranged = pd.ranged;
+        // 自己的 maxHp 也要跟着快照走。原来这里只同步 hp，maxHp 只在 joined 里
+        // 设一次，于是「服务端认为我是 100 血、客户端按本地干员表显示 200」时
+        // 血条会写成 100/200 而不报错——盾山被 100 点伤害打死，而 HUD 上还剩半条。
+        // 远程玩家早就是按快照的 maxHp 归一化的（见下面的 r.maxHp），自己反而没有。
+        if (typeof pd.maxHp === 'number' && pd.maxHp > 0) local.maxHp = pd.maxHp;
+        // 武器槽以服务端为准，但**不能接受本干员不可能有的槽**：
+        // pistolOnly 的干员主武器槽是空的，switchWeapon() 和服务端 handleSwitch()
+        // 两处都拒绝切到 primary，那么快照里出现 primary 只可能是服务端不认识
+        // 这个干员（例如 node server.js 还是旧进程）。照抄下来的后果是
+        // local.ranged 变成步枪：HUD 名字和弹药数立刻变成步枪，下一次重生
+        // 模型也换成步枪——看起来就是「自己突然切了枪」。
+        // 这里钉死在副武器（手枪）上，并且只在第一次发现时提示一次。
+        if (heroOf(local.hero).pistolOnly && (pd.current === 'primary' || (pd.ranged && pd.ranged !== 'pistol'))) {
+          warnStaleServer();
+          local.current = (pd.current === 'melee') ? 'melee' : 'secondary';
+          local.ranged = 'pistol';
+        } else {
+          local.current = pd.current;
+          local.ranged = pd.ranged;
+        }
+        // 近战同理：干员锁定近战时（盾山 = 盾击）不接受服务端给的别的刀。
+        local.melee = heroOf(local.hero).melee || pd.melee;
           if (pd.primary) local.primary = pd.primary;
           if (pd.secondary) local.secondary = pd.secondary;
           if (typeof pd.ammoPrimary === 'number') local.ammoPrimary = pd.ammoPrimary;
@@ -5012,6 +5625,9 @@ var smokeParticles = [];
         r.targetYaw = pd.yaw;
         r.targetPitch = pd.pitch;
         if (typeof pd.crouch === 'boolean') r.crouch = pd.crouch;
+        if (pd.hero && HEROES[pd.hero]) r.hero = pd.hero;
+        if (typeof pd.maxHp === 'number' && pd.maxHp > 0) r.maxHp = pd.maxHp;
+        if (typeof pd.shield === 'boolean') r.shield = pd.shield;
         if (pd.vel) r.vel.set(pd.vel.x, pd.vel.y, pd.vel.z);
         r.hp = pd.hp;
         r.alive = pd.alive;
@@ -5032,8 +5648,9 @@ var smokeParticles = [];
         }
         updateRemoteWeaponVisual(r);
 
-        // 更新血条
-        var frac = clamp(r.hp / 100, 0, 1);
+        // 更新血条：按各自的 maxHp 归一化，不能写死 100。
+        // 盾山满血 200，除以 100 会得到 2.0，血条条会撑到边框外面去。
+        var frac = clamp(r.hp / (r.maxHp || 100), 0, 1);
         r.healthFill.scale.x = Math.max(0.001, frac);
         r.healthFill.position.x = -0.42 * (1 - frac);
         r.healthFill.material.color.setHex(frac > 0.6 ? 0x3fb950 : (frac > 0.3 ? 0xd29922 : 0xf85149));
@@ -5059,6 +5676,21 @@ var smokeParticles = [];
         showHitmarker(zone);
         playHitSound(zone === 'head');
       }
+      // 被盾挡下的弹道：本地预测那一枪只跟静态掩体求交（updateLocal 里的
+      // BOXES 循环），根本不知道前面站着一面盾，所以火花打在了盾后面很远处。
+      // 这里补一次权威弹着点上的金属跳弹 + 一声跳弹音。
+      // 注意不能进 hitAny 分支：server 刻意没把被挡的目标放进 hitPlayers，
+      // 出准星标记会让人以为打进去了。
+      if (msg.tracers) {
+        var blocked = 0;
+        for (var bi = 0; bi < msg.tracers.length; bi++) {
+          var btr = msg.tracers[bi];
+          if (btr.hitZone !== 'shield') continue;
+          blocked++;
+          addZoneImpact(new THREE.Vector3(btr.end.x, btr.end.y, btr.end.z), 'shield', true);
+        }
+        if (blocked) playRicochetSound();
+      }
       return;
     }
     playShotSound(msg.weaponId, true);
@@ -5071,11 +5703,12 @@ var smokeParticles = [];
           0.06
         );
         if (tr.hitPlayer || tr.hitDummy) {
-          // 爆头的血雾更亮更多：旁观者也该看得出刚才那一枪打的是头
-          var head = tr.hitZone === 'head';
-          addImpact(new THREE.Vector3(tr.end.x, tr.end.y, tr.end.z), head ? 0xff2222 : 0xff6655, head ? 18 : 10, false);
+          // 爆头的血雾更亮更多；打在盾面上换金属跳弹、打穿面窗加玻璃碎屑。
+          // 判定条件不能只看 tr.hitPlayer：被盾挡下时 hitPlayer 照样是有值的
+          //（server 用它把弹道停在盾上），只是零伤害。
+          addZoneImpact(new THREE.Vector3(tr.end.x, tr.end.y, tr.end.z), tr.hitZone, true);
         } else {
-          addImpact(new THREE.Vector3(tr.end.x, tr.end.y, tr.end.z), 0xffd27a, 6, false);
+          addZoneImpact(new THREE.Vector3(tr.end.x, tr.end.y, tr.end.z), null, false);
         }
       });
     }
@@ -5091,7 +5724,7 @@ var smokeParticles = [];
         // 从所有命中玩家里找出最高级别的部位，用作命中标记。
         // 只打中靶子时 hitPlayers 是空的（重击现在也会命中靶子），
         // 此时 bestZone 保持 null，showHitmarker 走默认标记。
-        var rank = { head: 4, torso: 3, leg: 2, arm: 1 };
+        var rank = { head: 5, glass: 4, torso: 3, leg: 2, arm: 1 };
         var bestZone = null;
         if (msg.hitZones && msg.hitPlayers) {
           for (var i = 0; i < msg.hitPlayers.length; i++) {
@@ -5133,14 +5766,18 @@ var smokeParticles = [];
         // 补给重置，与服务端 spawn() 保持一致。这里本地先算一遍而不是等快照，
         // 是为了让复活瞬间的 HUD 就是对的——否则最多 50ms 内会显示上条命
         // 打空的弹药数，复活后第一眼看到「0 / 0」很容易误判成没子弹。
-        local.reservePrimary = WEAPONS[local.primary].reserve;
-        local.reserveSecondary = WEAPONS.pistol.reserve;
+        local.reservePrimary = WEAPONS[local.primary].reserve * (heroOf(local.hero).reserveK || 1);
+        local.reserveSecondary = WEAPONS.pistol.reserve * (heroOf(local.hero).reserveK || 1);
         local.grenadeCount = GRENADE_MAX;
         local.smokeCount = SMOKE_MAX;
-        local.current = 'primary';
-        local.ranged = local.primary;
-        local.ammo = local.ammoPrimary;
-        local.reserve = local.reservePrimary;
+        // pistolOnly 的角色主武器槽是空的，写死 'primary' 会把手上这把手枪
+        // 按「主武器」算，于是两个槽各有一个弹匣 = 切一下枪就等于换完弹。
+        // 服务端 spawn() 里是同一条推理。
+        local.current = heroOf(local.hero).pistolOnly ? 'secondary' : 'primary';
+        local.ranged = local.current === 'secondary' ? local.secondary : local.primary;
+        local.ammo = local.current === 'secondary' ? local.ammoSecondary : local.ammoPrimary;
+        local.reserve = local.current === 'secondary' ? local.reserveSecondary : local.reservePrimary;
+        local.shield = false;
       cancelReload();          // 换弹途中阵亡：连定时器一起作废，别让它复活后补弹
       // 重生必须把「手上这把武器」的全部状态归零，而不只是作废换弹动画。
       //
@@ -5699,6 +6336,21 @@ var smokeParticles = [];
           // 没有「松手取消」——重击是承诺出去的一刀，点了就要落地。
           if (!local.alive) return;
           startHeavyWindup();
+        } else if (heroOf(local.hero).shield) {
+          // 盾山没有开镜，右键改成**举盾**，而且是**按一下切换**（toggle）：
+          // 按下举、再按一下收，中间松手不收。
+          //
+          // 原来是「按住举、松手收」，照开镜的手感抄的，但盾不是镜：
+          //   - 举盾要一直举着推进，全程压着右键还要同时按 WASD + 左键开枪，
+          //     手根本不够用，实际玩起来只能点一下——而点一下的结果是盾抬起来
+          //     一半又掉回去，看着就像「举了一下又切回枪」，用户报的正是这个；
+          //   - mouseup 落在 document 上，指针锁定期间只要有一次没收到（切窗口、
+          //     浏览器吞掉右键的 mouseup），盾就会一直举着，状态还是黏的。
+          // toggle 之后「按下」是唯一的状态源，不依赖任何 mouseup。
+          // 收盾的其他出口照旧：切枪 / 死亡 / 失去指针锁定都会强制收（见各处
+          // local.shield = false），所以不会出现举着盾切枪或者死了还举着的情况。
+          if (!local.alive) return;
+          local.shield = !local.shield;
         } else {
           ads = true;
         }
@@ -5712,7 +6364,9 @@ var smokeParticles = [];
           send({ t: 'attack', down: false });
         }
       } else if (e.button === 2) {
-        // 近战重击没有「松手」语义，前摇照走；这里只处理枪械开镜松开
+        // 近战重击没有「松手」语义，前摇照走。
+        // 盾山也没有：举盾是 toggle，松手不收（见上面 mousedown 的说明），
+        // 所以这里**只**关开镜，一个字都不能碰 local.shield。
         ads = false;
       }
     });
@@ -5728,9 +6382,11 @@ var smokeParticles = [];
     canvas.addEventListener('wheel', function (e) {
       if (!gameStarted || !pointerLocked || !local.alive) return;
       e.preventDefault();
-      var order = ['melee', 'primary', 'secondary'];
+      var order = heroOf(local.hero).pistolOnly
+        ? ['melee', 'secondary']          // 主武器槽是空的，滚过去会切到一把不存在的枪
+        : ['melee', 'primary', 'secondary'];
       var idx = order.indexOf(local.current);
-      if (idx < 0) idx = 1;
+      if (idx < 0) idx = order.length - 1;
       // deltaY > 0 向下滚 → 下一把（index+1）；向上滚 → 上一把（index-1）
       var next = e.deltaY > 0
         ? order[(idx + 1) % order.length]
@@ -5744,6 +6400,7 @@ var smokeParticles = [];
         keys.f = keys.b = keys.l = keys.r = keys.jump = keys.run = keys.crouch = false;
         triggerDown = false;
         ads = false;
+        local.shield = false;
         send({ t: 'attack', down: false });
       }
     });
@@ -5785,6 +6442,9 @@ var smokeParticles = [];
     }
   function switchWeapon(slot) {
     if (!gameStarted) return;
+    // 主武器槽对 pistolOnly 的角色是空的。服务端 handleSwitch 也直接 return，
+    // 两边都拦是因为切过去会让 ranged 指向一把这条命根本没拿的枪。
+    if (slot === 'primary' && heroOf(local.hero).pistolOnly) return;
     if (slot === 'melee') { local.current = 'melee'; }
     else if (slot === 'secondary') { local.current = 'secondary'; local.ranged = local.secondary; local.ammo = local.ammoSecondary; local.reserve = local.reserveSecondary; }
       else if (slot === 'primary') { local.current = 'primary'; local.ranged = local.primary; local.ammo = local.ammoPrimary; local.reserve = local.reservePrimary; }
@@ -5792,6 +6452,10 @@ var smokeParticles = [];
     if (triggerDown) { triggerDown = false; send({ t: 'attack', down: false }); }
     cancelReload();            // 换弹中切枪：这次换弹作废，新枪立刻可用
     ads = false;
+    // 切到近战 = 把盾从「举着挡」变成「拿着砸」，同一面盾不能同时干两件事。
+    // 收盾是必须的而不只是好看：服务端只看 p.shield 决定要不要挡弹，
+    // 留着 true 就会出现「盾在挥、正面还免疫」。
+    local.shield = false;
     // 切枪打断重击前摇：换成别的武器，前摇状态没有任何意义
     cancelHeavyWindup();
     bloom = 0;                 // 换枪清零累积散射（每把枪的 bloomMax 不同，不能沿用）
@@ -5913,7 +6577,9 @@ var smokeParticles = [];
     var kick = (wpn.recoil || 0.015) * adsK * ramp;
     recoilPitch += kick * (0.78 + Math.random() * 0.44);
     recoilYaw += (Math.random() - 0.5) * 2 * (wpn.recoilH || 0.004) * adsK * ramp * (1 + 0.8 * burstFrac);
-    recoilZ += (wpn.id === 'awp' ? 0.16 : (wpn.id === 'shotgun' ? 0.1 : 0.05)) * (1 + 0.5 * burstFrac);
+    // 视觉后座（枪往后缩）。AK 单发能量比 5.56 大一档，给到步枪（0.05）的 1.6 倍，
+    // 但还远不到狙的 0.16 —— 它毕竟是连发枪，缩太多会在 135ms 的射速下抖成一团。
+    recoilZ += (wpn.id === 'awp' ? 0.16 : (wpn.id === 'shotgun' ? 0.1 : (wpn.id === 'ak47' ? 0.08 : 0.05))) * (1 + 0.5 * burstFrac);
 
     // 枪口火焰
     var ray = castLocalRay(wpn.range);
@@ -5925,7 +6591,7 @@ var smokeParticles = [];
     } else {
       muzzlePos.copy(ray.origin).addScaledVector(ray.dir, 0.5);
     }
-    var flashSize = wpn.id === 'awp' ? 0.5 : (wpn.id === 'shotgun' ? 0.4 : 0.25);
+    var flashSize = wpn.id === 'awp' ? 0.5 : (wpn.id === 'shotgun' ? 0.4 : (wpn.id === 'ak47' ? 0.34 : 0.25));
     addFlash(muzzlePos, 0xffcc66, flashSize, 0.06);
     muzzleLight.position.copy(muzzlePos);
     muzzleLight.intensity = 1.5;
@@ -6023,21 +6689,65 @@ var smokeParticles = [];
   // ----------------------------------------------------------
   // 本地更新
   // ----------------------------------------------------------
+  // 第一人称盾牌姿态。收/举之间指数插值（0.16s 时间常数），不做瞬切——
+  // 一面 20kg 的盾瞬间出现在画面里比没有盾更假。
+  function updateViewmodelShield(dt) {
+    if (!vmShieldGroup) return;
+    var hero = heroOf(local.hero);
+    if (!hero.shield || !local.alive) {
+      vmShieldGroup.visible = false;
+      shieldPose = 0;
+      return;
+    }
+    var bash = local.current === 'melee';
+    // 近战槽：盾在手上准备砸，恒定停在 BASH 姿态（不吃举/收）。
+    // 其余情况：local.shield 决定举还是收。
+    var want = bash ? 1 : (local.shield ? 1 : 0);
+    shieldPose += (want - shieldPose) * (1 - Math.exp(-dt / 0.16));
+    var a = bash ? VM_SHIELD_BASH : VM_SHIELD_DOWN;
+    var b = bash ? VM_SHIELD_BASH : VM_SHIELD_UP;
+    var u = shieldPose;
+    vmShieldGroup.position.set(
+      a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u);
+    vmShieldGroup.rotation.set(
+      a[3] + (b[3] - a[3]) * u, a[4] + (b[4] - a[4]) * u, a[5] + (b[5] - a[5]) * u);
+    // 近战槽里叠一层挥击弧线：盾击的动作数据本来就在 MELEE_ARC 里（saw / sawPush），
+    // 直接借过来当「往前撞」的位移，不用为盾另写一套动画。
+    // swingTime / swingStyle / swingDur 都是本地挥砍的现成状态（localMelee 里置的），
+    // 这里只是读——真正的递减在下面 updateLocal 的挥砍块里做。
+    if (bash && swingTime > 0 && swingDur > 0) {
+      var ap = meleeArcPose(swingStyle, clamp(1 - swingTime / swingDur, 0, 1), ARC_TMP);
+      vmShieldGroup.position.x += ap.px;
+      vmShieldGroup.position.y += ap.py;
+      vmShieldGroup.position.z += ap.pz;
+      vmShieldGroup.rotation.x += ap.rx;
+      vmShieldGroup.rotation.y += ap.ry;
+      vmShieldGroup.rotation.z += ap.rz;
+    }
+    vmShieldGroup.visible = bash || shieldPose > 0.02;
+  }
+
   function updateLocal(dt) {
     if (!gameStarted || !local.alive || !local.initialized) return;
 
-    var adsActive = ads && local.current !== 'melee';
+    var hero = heroOf(local.hero);
+    // 盾山没有光学镜，右键被改成举盾，所以 ads 对他永远是 false（mousedown 里
+    // 也不会置 true，这里再兜一道，免得别的路径把 ads 打开）。
+    var adsActive = ads && local.current !== 'melee' && !hero.shield;
     // 速度来自「手上这把武器」的 moveSpeed，不再是一个全局常数 + 机枪特例。
     // 原来是 (run ? 13 : 8) * (lmg ? 0.6 : 1)，除机枪外所有武器同速。
     var heldWpn = WEAPONS[local.current === 'melee' ? local.melee : currentRangedId()];
     var wpnMove = (heldWpn && heldWpn.moveSpeed) || 1;
+    // 干员系数（盾山 0.88）× 举盾时的额外惩罚（0.62）。
+    // 举盾必须有机会成本，不然全程举着就是最优解。
+    var heroMove = (hero.moveSpeed || 1) * (local.shield ? SHIELD_MOVE_K : 1);
     // 重击前摇时移动大幅减速：前摇是「站定出手」的承诺，边跑边挥还能全速绕圈
     // 就没法被反打了。前摇期间移速压到 40%。
     var chargeSlow = (heavyWindup > 0 && local.current === 'melee') ? 0.40 : 1;
     // 蹲下：移速压到 55%，且不能疾跑（跑速和蹲是互斥的两个状态）
     var crouchSlow = keys.crouch ? 0.55 : 1;
     var speed = (keys.crouch ? WALK_SPEED : (keys.run ? SPRINT_SPEED : WALK_SPEED))
-      * wpnMove * (adsActive ? 0.55 : 1) * chargeSlow * crouchSlow;
+      * wpnMove * heroMove * (adsActive ? 0.55 : 1) * chargeSlow * crouchSlow;
     var forward = new THREE.Vector3(-Math.sin(local.yaw), 0, -Math.cos(local.yaw));
     var right = new THREE.Vector3(Math.cos(local.yaw), 0, -Math.sin(local.yaw));
     var wish = new THREE.Vector3();
@@ -6154,6 +6864,8 @@ var smokeParticles = [];
     // 开镜时隐藏武器：只有真正贴到镜筒后面去看（有光学镜的枪）才要收起枪身，
     // 其余枪的"开镜"是机械瞄具贴腮，枪必须留在画面里。
     vmGroup.visible = !(adsActive && SCOPES[local.ranged]);
+
+    updateViewmodelShield(dt);
 
     // 后坐力恢复。
     //
@@ -6279,6 +6991,41 @@ var smokeParticles = [];
       if (r.healthGroup) {
         r.healthGroup.quaternion.copy(camera.quaternion)
           .premultiply(r.group.quaternion.clone().invert());
+      }
+
+      // 盾山的第三人称盾牌。挂在 group 上，所以蹲下的 -crouchDrop 自动跟着，
+      // 和服务端 raycastPlayerZones 里的 drop 是同一套位移。
+      // 三种情况不显示：不是盾山 / 死了 / 切到近战（此时手上那面盾由武器管线画，
+      // 服务端也同时停止用 SHIELD_PLATE 挡弹，两边一致）。
+      if (r.shieldTP) {
+        var wantSh = (heroOf(r.hero).shield && r.alive && r.current !== 'melee' && r.shield) ? 1 : 0;
+        r.shieldLerp += (wantSh - r.shieldLerp) * (1 - Math.exp(-dt / 0.16));
+        var shOn = heroOf(r.hero).shield && r.alive && r.current !== 'melee' && r.shieldLerp > 0.02;
+        r.shieldTP.visible = shOn;
+        if (shOn) {
+          var su = r.shieldLerp;
+          var A = SHIELD_TP_STOW, B = SHIELD_TP_UP;
+          r.shieldTP.position.set(
+            A[0] + (B[0] - A[0]) * su + Math.sin(Math.PI * su) * SHIELD_TP_SWING,
+            A[1] + (B[1] - A[1]) * su,
+            A[2] + (B[2] - A[2]) * su);
+          r.shieldTP.rotation.set(
+            A[3] + (B[3] - A[3]) * su,
+            A[4] + (B[4] - A[4]) * su,
+            A[5] + (B[5] - A[5]) * su);
+        }
+        // 枪给盾让位（见 SHIELD_TP_GUN_OFF）。改的是 r.mount 而不是直接改
+        // weaponGroup：挂点被后坐、换弹、持握 IK 三处共用，只挪 weaponGroup
+        // 的话下一处就把它写回 WEAPON_MOUNT 了。每帧写，因为 setHoldAnchors
+        // 只在换枪那一刻写一次，而 shieldLerp 是连续变化的。
+        if (heroOf(r.hero).shield && r.current !== 'melee') {
+          var gs = r.shieldLerp;
+          r.mountBuf[0] = WEAPON_MOUNT[0] + SHIELD_TP_GUN_OFF[0] * gs;
+          r.mountBuf[1] = WEAPON_MOUNT[1] + SHIELD_TP_GUN_OFF[1] * gs;
+          r.mountBuf[2] = WEAPON_MOUNT[2] + SHIELD_TP_GUN_OFF[2] * gs;
+          r.mount = r.mountBuf;
+          if (r.reloadAnim <= 0) r.weaponGroup.position.set(r.mountBuf[0], r.mountBuf[1], r.mountBuf[2]);
+        }
       }
 
       // 开火后坐 / 挥砍动画
@@ -6536,11 +7283,13 @@ var smokeParticles = [];
     // 枪身侧倾。位移用 WEAPON_TP_SCALE 折算：pose 里的量是模型本地尺寸，
     // 而 weaponGroup 是身体尺度，直接用会大出 1/0.68 倍。
     // 幅度打七折——第三人称手臂受肩宽和臂长约束，第一人称那么夸张的翻转在这儿会脱手。
-    var s = WEAPON_TP_SCALE, a = 0.7;
+    // 基准必须取 r.mount（不是写死 WEAPON_MOUNT）：盾山举盾时挂点被挪到了盾侧，
+    // 写死的话换弹这两秒枪会跳回盾板里去。
+    var s = WEAPON_TP_SCALE, a = 0.7, rmo = r.mount || WEAPON_MOUNT;
     r.weaponGroup.position.set(
-      WEAPON_MOUNT[0] + pose.px * s * a,
-      WEAPON_MOUNT[1] + pose.py * s * a,
-      WEAPON_MOUNT[2] + pose.pz * s * a
+      rmo[0] + pose.px * s * a,
+      rmo[1] + pose.py * s * a,
+      rmo[2] + pose.pz * s * a
     );
     r.weaponGroup.rotation.set(pose.rx * a, pose.ry * a, pose.rz * a);
 
@@ -6616,6 +7365,7 @@ var smokeParticles = [];
       yaw: aimYaw(),
       pitch: aimPitch(),
       ads: !!(ads && local.current !== 'melee'),
+      shield: !!local.shield,
       crouch: keys.crouch
     });
   }
@@ -6672,6 +7422,45 @@ var smokeParticles = [];
     nameInput.focus();
   }
 
+  // 按选中的干员锁掉不该选的区块。锁是**视觉 + 交互**双保险：
+  // .locked 压暗整块并吃掉 pointer-events，.disabled 挡住卡片自己的 click——
+  // 只做前者的话键盘 Tab 聚焦后回车照样能选中。
+  // 服务端 handleJoin 里还有一份独立校验（pistolOnly 直接改写 primary），
+  // 这边只是别让玩家白选一场。
+  function applyHeroLocks() {
+    var h = heroOf(selectedHero);
+    var mSec = document.getElementById('meleeSection');
+    var rSec = document.getElementById('rangedSection');
+    var hint = document.getElementById('heroHint');
+    var lockMelee = !!h.melee, lockRanged = !!h.pistolOnly;
+    if (mSec) mSec.classList.toggle('locked', lockMelee);
+    if (rSec) rSec.classList.toggle('locked', lockRanged);
+    document.querySelectorAll('#meleeGrid .weapon-card').forEach(function (c) {
+      c.classList.toggle('disabled', lockMelee);
+    });
+    document.querySelectorAll('#rangedGrid .weapon-card').forEach(function (c) {
+      c.classList.toggle('disabled', lockRanged);
+    });
+    if (hint) {
+      hint.textContent = h.pistolOnly
+        ? h.name + '：固定「手枪 + ' + (WEAPONS[h.melee] ? WEAPONS[h.melee].name : '近战') + '」，下面两项已锁定'
+        : h.name + '：近战 + 主武器自由搭配';
+    }
+    // 锁住的格子里还高亮着玩家上一次点的东西（比如步枪），可他进场拿的是手枪，
+    // 看起来像「锁串了」。所以锁的时候把高亮挪到这个干员真正会带的那件上，
+    // 解锁再还给玩家自己的选择——selectedPrimary / selectedMelee 一直不动，
+    // 这里只改 class。盾击不在近战格子里，于是锁住时近战区一个都不亮，
+    // 正好和提示文字里的「固定盾击」对上。
+    markGrid('#rangedGrid', lockRanged ? 'pistol' : selectedPrimary);
+    markGrid('#meleeGrid', lockMelee ? h.melee : selectedMelee);
+  }
+
+  function markGrid(sel, id) {
+    document.querySelectorAll(sel + ' .weapon-card').forEach(function (c) {
+      c.classList.toggle('selected', c.getAttribute('data-id') === id);
+    });
+  }
+
   function bindMenu() {
     nameInput.value = '';
     nameInput.focus();
@@ -6684,6 +7473,15 @@ var smokeParticles = [];
       else warnName('请先输入昵称');
     });
     refreshStart();
+
+    document.querySelectorAll('#heroGrid .weapon-card').forEach(function (card) {
+      card.addEventListener('click', function () {
+        document.querySelectorAll('#heroGrid .weapon-card').forEach(function (c) { c.classList.remove('selected'); });
+        card.classList.add('selected');
+        selectedHero = card.getAttribute('data-id');
+        applyHeroLocks();
+      });
+    });
 
     document.querySelectorAll('#meleeGrid .weapon-card').forEach(function (card) {
       card.addEventListener('click', function () {
@@ -6702,24 +7500,34 @@ var smokeParticles = [];
       });
     });
 
+    applyHeroLocks();
+
     startBtn.addEventListener('click', function () {
       // 没昵称就不放进去，也不再偷偷编一个「玩家xxx」顶上
       var name = cleanName();
       if (!name) { warnName('请先输入昵称'); return; }
       local.name = name;
-      local.melee = selectedMelee;
-      local.primary = selectedPrimary;
+      // 干员决定装备：pistolOnly 的角色主武器槽是空的（两个槽都放手枪会
+      // 变成「切枪即免费换弹」，服务端 spawn 里有同一条推理），所以
+      // current 一开始就落在 secondary 上。
+      var hero = heroOf(selectedHero);
+      local.hero = hero.id;
+      local.maxHp = hero.maxHp;
+      local.shield = false;
+      local.melee = hero.melee || selectedMelee;
+      local.primary = hero.pistolOnly ? 'pistol' : selectedPrimary;
       local.secondary = 'pistol';
-      local.ranged = local.primary;
-      local.current = 'primary';
-      local.ammoPrimary = WEAPONS[selectedPrimary].mag;
+      local.current = hero.pistolOnly ? 'secondary' : 'primary';
+      local.ranged = local.current === 'secondary' ? local.secondary : local.primary;
+      local.ammoPrimary = WEAPONS[local.primary].mag;
       local.ammoSecondary = WEAPONS.pistol.mag;
-      local.ammo = local.ammoPrimary;
+      local.ammo = local.current === 'secondary' ? local.ammoSecondary : local.ammoPrimary;
       // 备弹也要按选的枪初始化。joined 一到就会被服务端的值覆盖，但在那之前
       // HUD 已经画了一帧，不设的话选狙击时会先闪一下步枪的 120 发。
-      local.reservePrimary = WEAPONS[selectedPrimary].reserve;
-      local.reserveSecondary = WEAPONS.pistol.reserve;
-      local.reserve = local.reservePrimary;
+      var rk = hero.reserveK || 1;
+      local.reservePrimary = WEAPONS[local.primary].reserve * rk;
+      local.reserveSecondary = WEAPONS.pistol.reserve * rk;
+      local.reserve = local.current === 'secondary' ? local.reserveSecondary : local.reservePrimary;
       local.hp = local.maxHp;
       local.alive = true;
       lastHp = local.hp;
