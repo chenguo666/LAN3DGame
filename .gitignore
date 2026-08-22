@@ -1,0 +1,4 @@
+# 离屏渲染自检落盘的 PNG（.claude/capture_server.py 写入），只是临时验证产物，不进仓库。
+# 目录本身不用留：capture_server.py 里是 os.makedirs(SHOTS, exist_ok=True)，用到时自动重建。
+.claude/shots/
+.claude/shots_old/
