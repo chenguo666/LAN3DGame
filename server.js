@@ -82,6 +82,45 @@ const HIT_ZONES = [
 // 脚外缘 (0.33,0.02) → 0.99；手臂上外角 (0.42,1.52) → 0.71。r=1.02 够，留到 1.06。
 const HIT_BROAD_Y = 0.95;
 const HIT_BROAD_R = 1.06;
+
+// ---------------------------------------------------------------- 靶子命中盒
+// 靶子用的是外部模型（12.glb），姿态和玩家胶囊完全不同，所以**必须单独一套盒子**。
+// 实测该模型是张开四肢的站姿：肩宽 0.755m、两腿外张间距约 0.41m、
+// 中间 0.34m 宽是空的、脚掌前后铺开 0.29m。
+// 直接套玩家的 HIT_ZONES（躯干 r=0.34 / 腿 ox=±0.13）会同时犯两个错：
+// 看得见的腿在判定盒外（打腿不掉血），判定盒覆盖的中轴空档却能中弹（打空气掉血）。
+//
+// 下面这张表是 tools/fitzones.js 按 dummy.mesh 的**实际表面**拟合出来的，
+// 不是手填的：按面积加权撒 3 万个表面采样点 → 高度切层定竖直区间 →
+// 层内沿 X 做 1D k-means 分出左右肢 → 取半径分位数（不是最大值，避免盒子虚胖）。
+// 实测表面覆盖率 92.6%，无连续死区（最差单段 y0.5~0.6 漏 18%）。
+//
+// 比玩家表多一个 oz 字段：沿目标**朝向前后**的偏移。玩家是左右对称的胶囊，
+// 只需要 ox；这个模型的脚掌明显前伸、头略后仰，不给 oz 就套不准。
+// 腿拆成脚/小腿/大腿三段是因为腿是**斜的**——单根竖直柱要么套不住、
+// 要么按分位数被压到 0.10 这种连小腿都包不住的值。
+const DUMMY_ZONES = [
+  { zone: 'head',  mult: 2.35, kind: 'sphere', y: 1.74, oz: 0.03, r: 0.23 },
+  // 躯干下延到 0.86 接住骨盆：若从 0.98 起，而腿柱轴心在 ±0.20 外侧，
+  // 中间那块髋部就没有任何盒子覆盖，会出现「瞄着胯打却不掉血」。
+  { zone: 'torso', mult: 1.00, kind: 'cyl', y0: 0.86, y1: 1.45, r: 0.30, ox: 0.00,  oz: 0.00 },
+  // 张开的双臂，轴心在 ±0.15、半径 0.20 —— 外缘到 0.35，比躯干 0.30 更靠外，
+  // 侧面来的攻击先中手臂，和玩家表同一套设计意图。
+  { zone: 'arm',   mult: 0.78, kind: 'cyl', y0: 1.30, y1: 1.58, r: 0.21, ox: -0.15, oz: -0.03 },
+  { zone: 'arm',   mult: 0.78, kind: 'cyl', y0: 1.30, y1: 1.58, r: 0.20, ox: 0.15,  oz: -0.03 },
+  // 小腿段
+  { zone: 'leg',   mult: 0.80, kind: 'cyl', y0: 0.02, y1: 0.52, r: 0.12, ox: -0.23, oz: 0.07 },
+  { zone: 'leg',   mult: 0.80, kind: 'cyl', y0: 0.02, y1: 0.52, r: 0.11, ox: 0.26,  oz: 0.07 },
+  // 大腿段（比小腿更靠内，因为腿是外张的）
+  { zone: 'leg',   mult: 0.80, kind: 'cyl', y0: 0.52, y1: 0.90, r: 0.09, ox: -0.20, oz: 0.07 },
+  { zone: 'leg',   mult: 0.80, kind: 'cyl', y0: 0.52, y1: 0.90, r: 0.13, ox: 0.11,  oz: 0.07 },
+  // 脚掌。不给这一对的话 y0~0.1 段漏 43%，是全身最大的死区。
+  { zone: 'leg',   mult: 0.80, kind: 'cyl', y0: 0.00, y1: 0.16, r: 0.12, ox: -0.21, oz: 0.05 },
+  { zone: 'leg',   mult: 0.80, kind: 'cyl', y0: 0.00, y1: 0.16, r: 0.11, ox: 0.29,  oz: 0.13 },
+];
+// 靶子的广相球。由 fitzones.js 一并算出：同时外切网格本体和上面所有盒子。
+const DUMMY_BROAD_Y = 0.95;
+const DUMMY_BROAD_R = 1.07;
 // 部位中文名，只用于击杀提示
 const ZONE_LABEL = { head: '头部', torso: '躯干', arm: '手臂', leg: '腿部' };
 
@@ -337,13 +376,18 @@ const MELEE_COMBO = {
 // 客户端靠它播前摇动画，服务端靠它把结算排队到 tick。
 // 一刀总时长（前摇+收势）：匕首 1.0s · 尼泊尔 1.3s · 电锯 1.4s
 // · 武士刀 1.45s · 斧 1.85s——全部落在 1~2 秒一重刀的节奏里。
+//
+// 动作编排：轻击走**横向**（左右削）、重击走**竖向**（上下劈），
+// 一横一竖让两种攻击一眼可辨。例外是匕首（短刃，突刺才是杀招）
+// 和电锯（靠链条切割，动作是往前压锯）。
+// s 只驱动客户端表现，但仍要两端一致——否则改客户端时没人记得回来看这张表。
 // ---------------------------------------------------------------
 const MELEE_HEAVY = {
-  knife:    { dmg: 60,  windup: 0.45, cd: 0.55, s: 'stab',     rngK: 1.15, arcK: 1.35 },
+  knife:    { dmg: 60,  windup: 0.45, cd: 0.55, s: 'lunge',    rngK: 1.15, arcK: 1.35 },
   kukri:    { dmg: 66,  windup: 0.60, cd: 0.70, s: 'overhead', rngK: 1.10, arcK: 0.90 },
-  katana:   { dmg: 66,  windup: 0.70, cd: 0.75, s: 'overhead', rngK: 1.10, arcK: 0.85 },
-  axe:      { dmg: 80,  windup: 0.90, cd: 0.95, s: 'overhead', rngK: 1.05, arcK: 0.85 },
-  chainsaw: { dmg: 62,  windup: 0.65, cd: 0.75, s: 'sawB',     rngK: 1.05, arcK: 0.90 },
+  katana:   { dmg: 66,  windup: 0.70, cd: 0.75, s: 'diagonal', rngK: 1.10, arcK: 0.85 },
+  axe:      { dmg: 80,  windup: 0.90, cd: 0.95, s: 'cleave',   rngK: 1.05, arcK: 0.85 },
+  chainsaw: { dmg: 62,  windup: 0.65, cd: 0.75, s: 'sawPush',  rngK: 1.05, arcK: 0.90 },
 };
 function meleeStep(id, stage) {
   const c = MELEE_COMBO[id] || MELEE_COMBO.knife;
@@ -601,33 +645,47 @@ function rayCylinderY(o, d, cx, cz, r, y0, y1) {
   return best;
 }
 
-// 对一个玩家做分部位求交。返回 { t, zone, mult } 或 null。
+// 对一个目标做分部位求交。返回 { t, zone, mult } 或 null。
 // 取**最近**命中而不是按部位优先级：手臂挡在胸口前面时就该判成手臂，
 // 这也是上面刻意让手臂柱比躯干柱更靠外的原因。
+//
+// 玩家和靶子走**不同的区域表**：玩家是收拢直立的胶囊（HIT_ZONES），
+// 靶子是外部模型的张开姿态（DUMMY_ZONES，见那里的说明）。
+// 靠 q.isDummy 分流，而不是给靶子写第二个函数——重击那个 bug 的教训就是
+// 「复制一份几何判定出去，两份必然各自演化」，所以这里只允许有一份求交逻辑。
 function raycastPlayerZones(o, d, q, maxT) {
+  const dummy = !!q.isDummy;
+  const zones = dummy ? DUMMY_ZONES : HIT_ZONES;
   // 蹲下：整个命中模型（含广相球）向下平移。站姿部位以 pos.y 为基准，
   // 蹲下时视野压到 0.8、躯干跟着下沉，打头更难、打胸口可能变成打脸。
   // 用单一的 drop 常量做平移，而不是重排部位表，保证「蹲下=整体矮一截」。
-  const drop = q.crouch ? CROUCH_DROP : 0;
+  // 靶子不会蹲。
+  const drop = (!dummy && q.crouch) ? CROUCH_DROP : 0;
   // 广相。raySphere 在「起点已在球内」时返回的是远交点（>0），也算命中，
   // 所以这里不用额外补贴身判定；返回 null 才是真的没交集。
-  const bt = raySphere(o, d, q.pos.x, q.pos.y + HIT_BROAD_Y - drop, q.pos.z, HIT_BROAD_R);
+  const by = dummy ? DUMMY_BROAD_Y : HIT_BROAD_Y;
+  const br = dummy ? DUMMY_BROAD_R : HIT_BROAD_R;
+  const bt = raySphere(o, d, q.pos.x, q.pos.y + by - drop, q.pos.z, br);
   if (bt === null || bt >= maxT) return null;
 
   // 体侧方向 = 朝向在水平面内左转 90°。左右对称，所以正负无所谓，只要垂直于朝向。
   const fwd = forwardFromYawPitch(q.yaw || 0, 0);
   const fh = Math.hypot(fwd.x, fwd.z) || 1;
   const sx = -fwd.z / fh, sz = fwd.x / fh;
+  // 朝向的水平单位向量。DUMMY_ZONES 的 oz 沿这个方向偏移（+oz = 目标身前）。
+  const bx = fwd.x / fh, bz = fwd.z / fh;
 
   let best = null;
-  for (let i = 0; i < HIT_ZONES.length; i++) {
-    const z = HIT_ZONES[i];
+  for (let i = 0; i < zones.length; i++) {
+    const z = zones[i];
     let t;
     if (z.kind === 'sphere') {
-      t = raySphere(o, d, q.pos.x, q.pos.y + z.y - drop, q.pos.z, z.r);
+      const cx = q.pos.x + sx * (z.ox || 0) + bx * (z.oz || 0);
+      const cz = q.pos.z + sz * (z.ox || 0) + bz * (z.oz || 0);
+      t = raySphere(o, d, cx, q.pos.y + z.y - drop, cz, z.r);
     } else {
-      const cx = q.pos.x + sx * (z.ox || 0);
-      const cz = q.pos.z + sz * (z.ox || 0);
+      const cx = q.pos.x + sx * (z.ox || 0) + bx * (z.oz || 0);
+      const cz = q.pos.z + sz * (z.ox || 0) + bz * (z.oz || 0);
       t = rayCylinderY(o, d, cx, cz, z.r, q.pos.y + z.y0 - drop, q.pos.y + z.y1 - drop);
     }
     if (t === null || t >= maxT) continue;
